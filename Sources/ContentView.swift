@@ -150,7 +150,8 @@ struct GlassTabBar: View {
                     VStack(spacing: 4) {
                         Image(systemName: items[i].0)
                             .font(.system(size: 19, weight: selected == i ? .semibold : .regular))
-                            .symbolEffect(.bounce, value: selected == i)
+                            .scaleEffect(selected == i ? 1.12 : 1.0)
+                            .animation(.spring(response: 0.3, dampingFraction: 0.7), value: selected)
                         Text(items[i].1).font(.system(size: 10, weight: selected == i ? .semibold : .regular))
                     }
                     .foregroundColor(selected == i ? theme.primaryColor : theme.textSecondaryColor)
