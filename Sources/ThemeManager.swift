@@ -3,14 +3,10 @@ import SwiftUI
 // 主题管理器：奶油风 / WinUI 双主题 + 液态玻璃强度
 class ThemeManager: ObservableObject {
     @Published var theme: Theme = .cream
-    @Published var glassIntensity: Double = 0.6 // 0~1
+    @Published var glassIntensity: Double = 0.55 // 0~1
 
     enum Theme: String {
         case cream, winui
-    }
-
-    var colorScheme: ColorScheme? {
-        theme == .cream ? .light : .light
     }
 
     // 奶油风配色
