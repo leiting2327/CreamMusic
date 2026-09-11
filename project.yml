@@ -2,7 +2,7 @@ name: CreamMusic
 options:
   bundleIdPrefix: com.cream
   deploymentTarget:
-    iOS: "16.1"
+    iOS: "16.2"
   createIntermediateGroups: true
 settings:
   base:
