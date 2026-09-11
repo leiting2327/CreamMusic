@@ -1,5 +1,6 @@
 import SwiftUI
 import AVKit
+import MediaPlayer
 
 // Apple Music 风格全屏播放器
 struct PlayerView: View {
