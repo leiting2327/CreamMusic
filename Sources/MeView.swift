@@ -64,7 +64,7 @@ struct MeView: View {
                     .glassCard()
 
                     Button("退出登录") {
-                        user = nil
+                        self.user = nil
                         UserDefaults.standard.removeObject(forKey: "user")
                     }
                     .font(.subheadline)
