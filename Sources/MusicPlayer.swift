@@ -10,7 +10,7 @@ class MusicPlayer: ObservableObject {
     @Published var playlist: [Song] = []
     @Published var currentIndex: Int = -1
 
-    private var player: AVPlayer?
+    var player: AVPlayer?
     private var timer: Timer?
     private var activity: Activity<MusicActivityAttributes>?
 
