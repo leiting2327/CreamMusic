@@ -129,7 +129,7 @@ struct LibraryView: View {
                 .foregroundColor(theme.textSecondaryColor.opacity(0.6))
         }
         .padding(12)
-        .background(theme.cardBg)
+        .background(theme.cardColor)
         .clipShape(RoundedRectangle(cornerRadius: 14))
         .padding(.bottom, 10)
     }
