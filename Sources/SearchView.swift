@@ -1,100 +1,103 @@
 import SwiftUI
 
+// 聚合搜索：一次搜三个平台，结果标注来源
 struct SearchView: View {
     @EnvironmentObject var theme: ThemeManager
     @EnvironmentObject var player: MusicPlayer
     @State private var keyword = ""
-    @State private var source = "netease"
     @State private var results: [Song] = []
     @State private var isLoading = false
-    @State private var errorMsg = ""
-
-    let sources = [("netease", "网易云"), ("tencent", "QQ音乐"), ("kugou", "酷狗")]
+    @State private var errorMsg: String?
+    @State private var showPlayer = false
 
     var body: some View {
-        VStack(spacing: 12) {
-            // 搜索栏
+        VStack(spacing: 0) {
+            // 标题
             HStack {
-                Image(systemName: "magnifyingglass").foregroundColor(theme.textSecondaryColor)
-                TextField("搜索歌曲、歌手、专辑", text: $keyword, onCommit: doSearch)
-                    .textFieldStyle(.plain)
-                    .foregroundColor(theme.textColor)
-                Button("搜索") { doSearch() }
-                    .font(.subheadline)
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 16).padding(.vertical, 6)
-                    .background(theme.primaryColor)
-                    .cornerRadius(16)
+                Text("搜索").font(.largeTitle).bold().foregroundColor(theme.textColor)
+                Spacer()
             }
-            .padding(.horizontal, 14).padding(.vertical, 10)
-            .glassCard()
-            .padding(.horizontal, 16)
+            .padding(.horizontal, 20).padding(.top, 20)
 
-            // 音源切换
-            HStack(spacing: 8) {
-                ForEach(sources, id: \.0) { s in
-                    Button(s.1) {
-                        source = s.0
-                        if !keyword.isEmpty { doSearch() }
+            // 搜索框
+            HStack(spacing: 10) {
+                Image(systemName: "magnifyingglass")
+                    .foregroundColor(theme.textSecondaryColor)
+                TextField("搜索歌曲、歌手（网易云/QQ/酷我）", text: $keyword)
+                    .font(.subheadline)
+                    .foregroundColor(theme.textColor)
+                    .autocorrectionDisabled()
+                    .submitLabel(.search)
+                    .onSubmit { doSearch() }
+                if !keyword.isEmpty {
+                    Button {
+                        keyword = ""
+                        results = []
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundColor(theme.textSecondaryColor)
                     }
-                    .font(.caption)
-                    .foregroundColor(source == s.0 ? .white : theme.textSecondaryColor)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 8)
-                    .background(source == s.0 ? theme.primaryColor : theme.cardColor)
-                    .cornerRadius(8)
                 }
             }
-            .padding(.horizontal, 16)
+            .padding(.horizontal, 14).padding(.vertical, 10)
+            .background {
+                RoundedRectangle(cornerRadius: 14)
+                    .fill(.ultraThinMaterial)
+                    .opacity(theme.glassIntensity)
+            }
+            .padding(.horizontal, 20).padding(.top, 10)
+
+            // 聚合提示
+            HStack(spacing: 6) {
+                Text("聚合搜索")
+                    .font(.system(size: 10))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 6).padding(.vertical, 2)
+                    .background(theme.primaryColor).cornerRadius(4)
+                Text("一次搜索 网易云 · QQ音乐 · 酷我音乐，结果已标注来源")
+                    .font(.system(size: 10))
+                    .foregroundColor(theme.textSecondaryColor)
+                Spacer()
+            }
+            .padding(.horizontal, 20).padding(.top, 8)
 
             if isLoading {
-                ProgressView().padding(.top, 40)
-            } else if !errorMsg.isEmpty {
-                Text(errorMsg).font(.caption).foregroundColor(.red).padding(.top, 40)
-            } else if results.isEmpty {
-                VStack(spacing: 8) {
-                    Image(systemName: "music.magnifyingglass").font(.largeTitle).foregroundColor(theme.textSecondaryColor)
-                    Text("输入关键词开始搜索\n支持网易云 / QQ音乐 / 酷狗")
-                        .font(.caption).foregroundColor(theme.textSecondaryColor)
-                        .multilineTextAlignment(.center)
-                }.padding(.top, 60)
+                Spacer()
+                ProgressView("搜索中…").tint(theme.primaryColor)
+                Spacer()
+            } else if let err = errorMsg {
+                Spacer()
+                Text(err).font(.caption).foregroundColor(.red)
+                Spacer()
             } else {
                 List(results) { song in
                     Button {
                         player.play(results, at: results.firstIndex(where: { $0.id == song.id }) ?? 0)
+                        showPlayer = true
                     } label: {
-                        HStack {
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(song.name).font(.subheadline).foregroundColor(theme.textColor).lineLimit(1)
-                                Text(song.artist).font(.caption).foregroundColor(theme.textSecondaryColor).lineLimit(1)
-                            }
-                            Spacer()
-                            Text(sourceLabel(song.source)).font(.system(size: 9))
-                                .foregroundColor(theme.primaryColor)
-                                .padding(.horizontal, 6).padding(.vertical, 2)
-                                .background(theme.primaryColor.opacity(0.15))
-                                .cornerRadius(4)
-                        }
+                        SongRow(song: song)
                     }
+                    .listRowBackground(Color.clear)
+                    .listRowSeparatorTint(theme.textSecondaryColor.opacity(0.15))
                 }
                 .listStyle(.plain)
+                .padding(.top, 4)
             }
-            Spacer()
         }
-        .padding(.top, 16)
-    }
-
-    private func sourceLabel(_ s: String) -> String {
-        s == "netease" ? "网易" : (s == "tencent" ? "QQ" : "酷狗")
+        .background(theme.bgColor.ignoresSafeArea())
+        .fullScreenCover(isPresented: $showPlayer) {
+            PlayerView().environmentObject(theme).environmentObject(player)
+        }
     }
 
     private func doSearch() {
-        guard !keyword.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+        let kw = keyword.trimmingCharacters(in: .whitespaces)
+        guard !kw.isEmpty else { return }
         isLoading = true
-        errorMsg = ""
+        errorMsg = nil
         Task {
             do {
-                let songs = try await MusicAPI.shared.search(source: source, keyword: keyword)
+                let songs = try await MusicAPI.shared.searchAll(keyword: kw)
                 await MainActor.run {
                     results = songs
                     isLoading = false
@@ -106,5 +109,48 @@ struct SearchView: View {
                 }
             }
         }
+    }
+}
+
+// 歌曲行（带封面预览 + 来源标注）
+struct SongRow: View {
+    @EnvironmentObject var theme: ThemeManager
+    let song: Song
+
+    var body: some View {
+        HStack(spacing: 12) {
+            // 封面预览
+            RoundedRectangle(cornerRadius: 8)
+                .fill(theme.primaryColor.opacity(0.2))
+                .frame(width: 46, height: 46)
+                .overlay(
+                    AsyncImage(url: URL(string: song.coverUrl)) { img in
+                        img.resizable().scaledToFill()
+                    } placeholder: {
+                        Image(systemName: "music.note")
+                            .foregroundColor(theme.primaryColor.opacity(0.6))
+                    }
+                )
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(song.name).font(.subheadline).bold().foregroundColor(theme.textColor).lineLimit(1)
+                Text(song.artist).font(.caption).foregroundColor(theme.textSecondaryColor).lineLimit(1)
+            }
+            Spacer()
+
+            // 来源标注（不切换平台，只标注）
+            Text(song.sourceLabel)
+                .font(.system(size: 9))
+                .foregroundColor(theme.primaryColor)
+                .padding(.horizontal, 6).padding(.vertical, 2)
+                .background(theme.primaryColor.opacity(0.15))
+                .cornerRadius(4)
+
+            Image(systemName: "play.circle")
+                .foregroundColor(theme.textSecondaryColor)
+        }
+        .padding(.vertical, 4)
+        .contentShape(Rectangle())
     }
 }

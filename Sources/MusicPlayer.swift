@@ -3,7 +3,7 @@ import AVFoundation
 import MediaPlayer
 import ActivityKit
 
-// 播放器管理器
+// 播放器管理器（修复：播放失败释放、可关闭、本地播放、控制中心/锁屏/后台）
 class MusicPlayer: ObservableObject {
     @Published var currentSong: Song?
     @Published var isPlaying = false
@@ -11,12 +11,15 @@ class MusicPlayer: ObservableObject {
     @Published var playlist: [Song] = []
     @Published var currentIndex: Int = -1
     @Published var isAirPlayActive = false
+    @Published var isLocalPlaying = false // 是否在播本地文件
+    @Published var playError: String? // 播放错误提示
 
     var player: AVPlayer?
     private var timer: Timer?
     private var activity: Activity<MusicActivityAttributes>?
     private var nowPlayingInfo = [String: Any]()
     private var airPlayStatusTimer: Timer?
+    private var isStopping = false
 
     init() {
         setupRemoteCommands()
@@ -78,7 +81,6 @@ class MusicPlayer: ObservableObject {
         nowPlayingInfo[MPNowPlayingInfoPropertyPlaybackRate] = isPlaying ? 1.0 : 0.0
         nowPlayingInfo[MPNowPlayingInfoPropertyMediaType] = MPNowPlayingInfoMediaType.audio.rawValue
 
-        // 封面
         if !song.coverUrl.isEmpty, let url = URL(string: song.coverUrl) {
             Task {
                 if let (data, _) = try? await URLSession.shared.data(from: url),
@@ -96,43 +98,113 @@ class MusicPlayer: ObservableObject {
 
     // ===== 播放控制 =====
     func play(_ songs: [Song], at index: Int) {
+        guard index >= 0, index < songs.count else { return }
         playlist = songs
         currentIndex = index
+        currentSong = songs[index]
+        isLocalPlaying = false
+        playError = nil
         playCurrent()
     }
 
-    func playCurrent() {
-        guard currentIndex >= 0, currentIndex < playlist.count else { return }
-        let song = playlist[currentIndex]
+    // 播放本地文件
+    func playLocal(fileURL: URL, song: Song) {
         currentSong = song
+        playlist = [song]
+        currentIndex = 0
+        isLocalPlaying = true
+        playError = nil
+        playItem(url: fileURL)
+    }
+
+    private func playCurrent() {
+        guard let song = currentSong else { return }
+        // 检查本地是否已有该歌曲的任意音质版本，优先本地播放
+        let local = LocalAudioManager.shared.localSongs.first { $0.song.id == song.id }
+        if let ls = local {
+            let url = LocalAudioManager.shared.fileURL(for: ls.fileName)
+            if FileManager.default.fileExists(atPath: url.path) {
+                isLocalPlaying = true
+                playItem(url: url)
+                return
+            }
+        }
+        isLocalPlaying = false
         Task {
             do {
                 let urlStr = try await MusicAPI.shared.getSongUrl(source: song.source, song: song)
                 guard let url = URL(string: urlStr), !urlStr.isEmpty else {
-                    await MainActor.run { isPlaying = false }
+                    await MainActor.run { self.playError = "获取播放地址失败"; self.isPlaying = false }
                     return
                 }
-                await MainActor.run {
-                    player = AVPlayer(url: url)
-                    player?.play()
-                    isPlaying = true
-                    startTimer()
-                    startLiveActivity()
-                    updateNowPlaying()
-                    startAirPlayMonitor()
-                }
+                await MainActor.run { self.playItem(url: url) }
             } catch {
                 await MainActor.run {
-                    isPlaying = false
-                    nowPlayingError = error.localizedDescription
+                    self.playError = error.localizedDescription
+                    self.isPlaying = false
+                    self.stopPlayback() // 失败则彻底释放
                 }
             }
         }
     }
 
-    @Published var nowPlayingError = ""
+    // 真正开始播放
+    private func playItem(url: URL) {
+        stopPlayback(keepSession: true)
+        let item = AVPlayerItem(url: url)
+        player = AVPlayer(playerItem: item)
+        player?.play()
+        isPlaying = true
+        startTimer()
+        startLiveActivity()
+        updateNowPlaying()
+        startAirPlayMonitor()
+
+        // 监听播放失败
+        NotificationCenter.default.addObserver(
+            forName: AVPlayerItem.failedToPlayToEndTimeNotification,
+            object: item, queue: .main
+        ) { [weak self] _ in
+            self?.playError = "播放失败，请换一首或切换音质"
+            self?.stopPlayback()
+        }
+        NotificationCenter.default.addObserver(
+            forName: .AVPlayerItemNewErrorLogEntry,
+            object: item, queue: .main
+        ) { [weak self] _ in
+            self?.playError = "播放出现错误"
+        }
+    }
+
+    // 关闭/停止播放（彻底释放）
+    func stopPlayback(keepSession: Bool = false) {
+        timer?.invalidate()
+        timer = nil
+        airPlayStatusTimer?.invalidate()
+        airPlayStatusTimer = nil
+        player?.pause()
+        player = nil
+        isPlaying = false
+        progress = 0
+        stopLiveActivity()
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+        if !keepSession {
+            currentSong = nil
+            playlist = []
+            currentIndex = -1
+        }
+    }
+
+    // 停止播放并关闭播放器（保留歌曲信息）
+    func stop() {
+        stopPlayback()
+    }
 
     func togglePlay() {
+        guard player != nil else {
+            if currentSong != nil { playCurrent() }
+            return
+        }
         if isPlaying {
             player?.pause()
             isPlaying = false
@@ -145,14 +217,18 @@ class MusicPlayer: ObservableObject {
     }
 
     func next() {
-        guard !playlist.isEmpty else { return }
+        guard !playlist.isEmpty, !isLocalPlaying else { return }
         currentIndex = (currentIndex + 1) % playlist.count
+        currentSong = playlist[currentIndex]
+        playError = nil
         playCurrent()
     }
 
     func prev() {
-        guard !playlist.isEmpty else { return }
+        guard !playlist.isEmpty, !isLocalPlaying else { return }
         currentIndex = (currentIndex - 1 + playlist.count) % playlist.count
+        currentSong = playlist[currentIndex]
+        playError = nil
         playCurrent()
     }
 
@@ -160,7 +236,6 @@ class MusicPlayer: ObservableObject {
         guard let duration = player?.currentItem?.duration.seconds, duration > 0 else { return }
         let time = CMTime(seconds: duration * min(max(percent, 0), 1), preferredTimescale: 600)
         player?.seek(to: time)
-        nowPlayingInfo[MPNowPlayingInfoPropertyElapsedPlaybackTime] = duration * min(max(percent, 0), 1)
     }
 
     private func startTimer() {
@@ -172,7 +247,6 @@ class MusicPlayer: ObservableObject {
                   duration > 0 else { return }
             self.progress = current / duration
             if current >= duration - 0.3 { self.next() }
-            // 每 5 秒刷新控制中心
             if Int(current) % 5 == 0 { self.updateNowPlaying() }
         }
     }
@@ -184,9 +258,7 @@ class MusicPlayer: ObservableObject {
             guard let self = self, let player = self.player else { return }
             let active = player.isExternalPlaybackActive
             if active != self.isAirPlayActive {
-                DispatchQueue.main.async {
-                    self.isAirPlayActive = active
-                }
+                DispatchQueue.main.async { self.isAirPlayActive = active }
             }
         }
     }
@@ -206,9 +278,7 @@ class MusicPlayer: ObservableObject {
     private func updateLiveActivity() {
         guard let activity = activity else { return }
         let state = MusicActivityAttributes.ContentState(isPlaying: isPlaying, progress: progress)
-        Task {
-            await activity.update(.init(state: state, staleDate: nil))
-        }
+        Task { await activity.update(.init(state: state, staleDate: nil)) }
     }
 
     func stopLiveActivity() {

@@ -200,7 +200,7 @@ struct QuickSearchSheet: View {
         }
         .task {
             do {
-                let songs = try await MusicAPI.shared.search(source: "netease", keyword: keyword)
+                let songs = try await MusicAPI.shared.searchAll(keyword: keyword)
                 results = songs
             } catch {
                 errorMsg = "搜索失败: \(error.localizedDescription)"
