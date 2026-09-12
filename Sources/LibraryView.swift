@@ -4,7 +4,7 @@ import SwiftUI
 struct LibraryView: View {
     @EnvironmentObject var theme: ThemeManager
     @EnvironmentObject var player: MusicPlayer
-    @EnvironmentObject var local: LocalAudioManager
+    @ObservedObject private var local = LocalAudioManager.shared
 
     var body: some View {
         ScrollView {

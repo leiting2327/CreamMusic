@@ -508,16 +508,47 @@ class MusicAPI {
             "rememberLogin": true,
             "csrf_token": "",
         ]
+        // 通道1：明文接口（部分网络可用）
+        var comps = URLComponents(string: "\(neteaseBase)/api/login/cellphone")!
+        comps.queryItems = [
+            URLQueryItem(name: "phone", value: phone),
+            URLQueryItem(name: "password", value: Data(password.utf8).md5Hex()),
+            URLQueryItem(name: "rememberLogin", value: "true"),
+            URLQueryItem(name: "timestamp", value: "\(Int(Date().timeIntervalSince1970 * 1000))")
+        ]
+        var plainReq = URLRequest(url: comps.url!)
+        plainReq.httpMethod = "POST"
+        plainReq.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        plainReq.setValue(UserAgent, forHTTPHeaderField: "User-Agent")
+        do {
+            let (data, resp) = try await session.data(for: plainReq)
+            if let http = resp as? HTTPURLResponse,
+               let setCookie = http.allHeaderFields["Set-Cookie"] as? String, !setCookie.isEmpty {
+                neteaseCookie = setCookie
+            }
+            if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               (json["code"] as? Int) == 200 {
+                return try parseNeteaseLogin(data: data)
+            }
+        } catch {}
+        // 通道2：weapi 加密接口（住宅网络通常可用）
         let enc = NetEaseCrypto.weapi(payload)
         var req = URLRequest(url: URL(string: "\(neteaseBase)/weapi/login/cellphone")!)
         req.httpMethod = "POST"
         req.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
         req.setValue(UserAgent, forHTTPHeaderField: "User-Agent")
         req.setValue(neteaseCookie, forHTTPHeaderField: "Cookie")
-        var comps = URLComponents()
-        comps.queryItems = enc.map { URLQueryItem(name: $0.key, value: $0.value) }
-        req.httpBody = comps.query?.data(using: .utf8)
-        let (data, _) = try await session.data(for: req)
+        var wComps = URLComponents()
+        wComps.queryItems = enc.map { URLQueryItem(name: $0.key, value: $0.value) }
+        req.httpBody = wComps.query?.data(using: .utf8)
+        let (data, resp2) = try await session.data(for: req)
+        if let http = resp2 as? HTTPURLResponse,
+           let setCookie = http.allHeaderFields["Set-Cookie"] as? String, !setCookie.isEmpty {
+            neteaseCookie = setCookie
+        }
+        if data.isEmpty {
+            throw NSError(domain: "Login", code: -2, userInfo: [NSLocalizedDescriptionKey: "登录接口被拦截，请切换网络或改用扫码登录"])
+        }
         return try parseNeteaseLogin(data: data)
     }
 
@@ -555,8 +586,32 @@ class MusicAPI {
         }
     }
 
-    // 验证码登录
+    // 验证码登录（明文 + weapi 双通道，避免单一通道被风控）
     func loginPhoneCaptcha(phone: String, captcha: String) async throws -> User {
+        // 通道1：明文接口
+        var comps = URLComponents(string: "\(neteaseBase)/api/login/cellphone")!
+        comps.queryItems = [
+            URLQueryItem(name: "phone", value: phone),
+            URLQueryItem(name: "captcha", value: captcha),
+            URLQueryItem(name: "rememberLogin", value: "true"),
+            URLQueryItem(name: "timestamp", value: "\(Int(Date().timeIntervalSince1970 * 1000))")
+        ]
+        var plainReq = URLRequest(url: comps.url!)
+        plainReq.httpMethod = "POST"
+        plainReq.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        plainReq.setValue(UserAgent, forHTTPHeaderField: "User-Agent")
+        do {
+            let (data, resp) = try await session.data(for: plainReq)
+            if let http = resp as? HTTPURLResponse,
+               let setCookie = http.allHeaderFields["Set-Cookie"] as? String, !setCookie.isEmpty {
+                neteaseCookie = setCookie
+            }
+            if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               (json["code"] as? Int) == 200 {
+                return try parseNeteaseLogin(data: data)
+            }
+        } catch {}
+        // 通道2：weapi 加密接口（住宅网络通常可用）
         let payload: [String: Any] = [
             "phone": phone,
             "captcha": captcha,
@@ -569,10 +624,17 @@ class MusicAPI {
         req.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
         req.setValue(UserAgent, forHTTPHeaderField: "User-Agent")
         req.setValue(neteaseCookie, forHTTPHeaderField: "Cookie")
-        var comps = URLComponents()
-        comps.queryItems = enc.map { URLQueryItem(name: $0.key, value: $0.value) }
-        req.httpBody = comps.query?.data(using: .utf8)
-        let (data, _) = try await session.data(for: req)
+        var wComps = URLComponents()
+        wComps.queryItems = enc.map { URLQueryItem(name: $0.key, value: $0.value) }
+        req.httpBody = wComps.query?.data(using: .utf8)
+        let (data, resp2) = try await session.data(for: req)
+        if let http = resp2 as? HTTPURLResponse,
+           let setCookie = http.allHeaderFields["Set-Cookie"] as? String, !setCookie.isEmpty {
+            neteaseCookie = setCookie
+        }
+        if data.isEmpty {
+            throw NSError(domain: "Login", code: -2, userInfo: [NSLocalizedDescriptionKey: "登录接口被拦截，请切换网络或改用扫码登录"])
+        }
         return try parseNeteaseLogin(data: data)
     }
 
@@ -736,7 +798,13 @@ class MusicAPI {
 
     // 解析网易云登录响应（密码/验证码共用）
     private func parseNeteaseLogin(data: Data) throws -> User {
-        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+        var json: [String: Any]?
+        do {
+            json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        } catch {
+            throw NSError(domain: "Login", code: -1, userInfo: [NSLocalizedDescriptionKey: "登录响应异常，请切换网络或改用扫码登录"])
+        }
+        guard let json else {
             throw NSError(domain: "Login", code: -1, userInfo: [NSLocalizedDescriptionKey: "登录失败，请检查网络"])
         }
         let code = json["code"] as? Int ?? -1
