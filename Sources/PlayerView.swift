@@ -16,6 +16,7 @@ struct PlayerView: View {
     @State private var showComments = false
     @State private var comments: [MusicComment] = []
     @State private var commentsLoading = false
+    @State private var showQueue = false
 
     var body: some View {
         ZStack {
@@ -78,7 +79,8 @@ struct PlayerView: View {
                         .padding(.top, 4)
                 }
 
-                // ===== 中部：大封面（Apple Music 风格，居中大图带投影） =====
+                // ===== 中部：大封面（P6 居中，弹性适配小屏） =====
+                let coverSize = min(340, UIScreen.main.bounds.width - 64)
                 ZStack {
                     RoundedRectangle(cornerRadius: 16)
                         .fill(
@@ -97,22 +99,13 @@ struct PlayerView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 16))
                         .shadow(color: .black.opacity(0.3), radius: 24, y: 10)
                 }
-                .frame(width: 340, height: 340)
-                .padding(.top, 26)
+                .frame(width: coverSize, height: coverSize)
+                .padding(.top, 14)
                 .rotation3DEffect(.degrees(isDragging ? 3 : 0), axis: (x: 0, y: 1, z: 0))
 
-                // ===== 歌名 / 歌手（Apple Music：居中） =====
+                // ===== 歌名 / 歌手（P6：居中 + VIP 角标） =====
                 VStack(spacing: 6) {
                     HStack(spacing: 8) {
-                        // 来源标注
-                        if let src = player.currentSong?.sourceLabel, !src.isEmpty {
-                            Text(src)
-                                .font(.system(size: 9))
-                                .foregroundColor(theme.primaryColor)
-                                .padding(.horizontal, 6).padding(.vertical, 2)
-                                .background(theme.primaryColor.opacity(0.15))
-                                .cornerRadius(4)
-                        }
                         // VIP 标注
                         if player.currentSong?.isVip == true {
                             Text("VIP")
@@ -123,19 +116,26 @@ struct PlayerView: View {
                                 .cornerRadius(4)
                         }
                     }
+                    .frame(height: 14)
                     Text(player.currentSong?.name ?? "")
                         .font(.title2).bold()
                         .foregroundColor(theme.textColor)
                         .lineLimit(1)
                         .multilineTextAlignment(.center)
-                    Text(player.currentSong?.artist ?? "")
+                    Text("\(player.currentSong?.artist ?? "")\(player.currentSong?.album.isEmpty == false ? " · " + (player.currentSong?.album ?? "") : "")")
                         .font(.subheadline)
                         .foregroundColor(theme.textSecondaryColor)
                         .lineLimit(1)
                         .multilineTextAlignment(.center)
+                    // 制作信息行（P5 特征）
+                    if let src = player.currentSong?.sourceLabel, !src.isEmpty {
+                        Text("来自 \(src)  ·  编曲 · 制作人")
+                            .font(.system(size: 10))
+                            .foregroundColor(theme.textSecondaryColor.opacity(0.8))
+                    }
                 }
                 .padding(.horizontal, 24)
-                .padding(.top, 18)
+                .padding(.top, 12)
 
                 // 歌词按钮（点击弹出歌词）
                 Button {
@@ -217,32 +217,26 @@ struct PlayerView: View {
                 .padding(.horizontal, 24)
                 .padding(.top, 10)
 
-                // ===== 底部工具条（Apple Music：评论/下载/歌词/AirPlay） =====
-                HStack(spacing: 30) {
-                    Button {
+                // ===== 底部工具条（P6：评论/随机播放/播放列表/下载） =====
+                HStack(spacing: 8) {
+                    toolItem(icon: "bubble.left", label: "评论") {
                         loadComments()
                         showComments = true
-                    } label: {
-                        Image(systemName: "bubble.left").font(.system(size: 16)).foregroundColor(theme.textSecondaryColor)
                     }
-                    Button {
-                        showDownloadSheet = true
-                    } label: {
-                        Image(systemName: "arrow.down.circle").font(.system(size: 17)).foregroundColor(theme.textSecondaryColor)
+                    toolItem(icon: "shuffle", label: "随机播放") {
+                        player.shufflePlaylist()
                     }
                     Spacer()
-                    Button {
-                        withAnimation { showLyrics.toggle() }
-                    } label: {
-                        Image(systemName: "text.quote")
-                            .font(.system(size: 16))
-                            .foregroundColor(showLyrics ? theme.primaryColor : theme.textSecondaryColor)
+                    toolItem(icon: "list.bullet", label: "播放列表") {
+                        showQueue = true
                     }
-                    AirPlayButton(tintColor: UIColor(theme.primaryColor)).frame(width: 24, height: 24)
+                    toolItem(icon: "arrow.down.circle", label: "下载") {
+                        showDownloadSheet = true
+                    }
                 }
-                .padding(.horizontal, 32)
-                .padding(.vertical, 14)
-                .padding(.bottom, 6)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 10)
+                .padding(.bottom, 4)
             }
 
             // ===== 歌词弹层（Apple Music 风格） =====
@@ -294,6 +288,12 @@ struct PlayerView: View {
             CommentsView(song: player.currentSong, comments: comments, loading: commentsLoading)
                 .presentationDetents([.large])
         }
+        .sheet(isPresented: $showQueue) {
+            QueueView(songs: player.playlist)
+                .environmentObject(theme)
+                .environmentObject(player)
+                .presentationDetents([.medium, .large])
+        }
     }
 
     private func loadComments() {
@@ -311,6 +311,19 @@ struct PlayerView: View {
                 await MainActor.run { commentsLoading = false }
             }
         }
+    }
+
+    private func toolItem(icon: String, label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(spacing: 4) {
+                Image(systemName: icon).font(.system(size: 16, weight: .medium))
+                Text(label).font(.system(size: 10))
+            }
+            .foregroundColor(theme.textSecondaryColor)
+            .frame(width: 56, height: 42)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     private var coverBackground: some View {
@@ -333,7 +346,10 @@ struct PlayerView: View {
         lyricText = "歌词加载中…"
         Task {
             do {
-                let lrc = try await MusicAPI.shared.getLyric(source: song.source, id: song.id)
+                let lrc = try await MusicAPI.shared.getLyric(
+                    source: song.source, id: song.id,
+                    songmid: song.songmid, kuwoRid: song.kuwoRid
+                )
                 if !lrc.isEmpty {
                     await MainActor.run { lyricText = lrc }
                 } else {
@@ -587,5 +603,76 @@ struct RoundedCorner: Shape {
             cornerRadii: CGSize(width: radius, height: radius)
         )
         return Path(path.cgPath)
+    }
+}
+
+// P7 播放队列
+struct QueueView: View {
+    @EnvironmentObject var theme: ThemeManager
+    @EnvironmentObject var player: MusicPlayer
+    @Environment(\.dismiss) var dismiss
+    let songs: [Song]
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Button { dismiss() } label: {
+                    Image(systemName: "chevron.down").foregroundColor(theme.textColor)
+                }
+                Spacer()
+                Text("播放队列")
+                    .font(.headline)
+                    .foregroundColor(theme.textColor)
+                Spacer()
+                Text("接下来 (\(songs.count)首)")
+                    .font(.caption)
+                    .foregroundColor(theme.textSecondaryColor)
+            }
+            .padding(.horizontal, 20).padding(.top, 16).padding(.bottom, 8)
+
+            ScrollView {
+                LazyVStack(spacing: 0) {
+                    ForEach(Array(songs.enumerated()), id: \.element.id) { idx, song in
+                        Button {
+                            player.play(songs, at: idx)
+                            dismiss()
+                        } label: {
+                            HStack(spacing: 10) {
+                                Text("\(idx + 1)")
+                                    .font(.system(size: 13, weight: .medium))
+                                    .foregroundColor(theme.textSecondaryColor)
+                                    .frame(width: 22)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(song.name)
+                                        .font(.system(size: 14, weight: song.id == player.currentSong?.id ? .bold : .regular))
+                                        .foregroundColor(song.id == player.currentSong?.id ? theme.primaryColor : theme.textColor)
+                                        .lineLimit(1)
+                                    Text(song.artist)
+                                        .font(.system(size: 11))
+                                        .foregroundColor(theme.textSecondaryColor)
+                                        .lineLimit(1)
+                                }
+                                Spacer()
+                                if song.isVip {
+                                    Text("VIP")
+                                        .font(.system(size: 8, weight: .bold))
+                                        .foregroundColor(.white)
+                                        .padding(.horizontal, 5).padding(.vertical, 2)
+                                        .background(LinearGradient(colors: [.orange, .red], startPoint: .leading, endPoint: .trailing))
+                                        .cornerRadius(3)
+                                }
+                                if song.id == player.currentSong?.id {
+                                    Image(systemName: "play.fill").font(.system(size: 11)).foregroundColor(theme.primaryColor)
+                                }
+                            }
+                            .padding(.horizontal, 20).padding(.vertical, 11)
+                        }
+                        .buttonStyle(.plain)
+                        Divider().padding(.leading, 52).opacity(0.5)
+                    }
+                }
+            }
+        }
+        .background(theme.bgColor)
     }
 }

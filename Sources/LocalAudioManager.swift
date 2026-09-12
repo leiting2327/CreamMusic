@@ -103,7 +103,7 @@ class LocalAudioManager: ObservableObject {
         }
     }
 
-    private func loadIndex() {
+    func loadIndex() {
         if let data = try? Data(contentsOf: indexURL),
            let list = try? JSONDecoder().decode([LocalSong].self, from: data) {
             localSongs = list

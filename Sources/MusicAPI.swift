@@ -323,25 +323,24 @@ class MusicAPI {
         return try await songUrlKuwo(song: song)
     }
 
-    // 网易云：Meting 流式
+    // 网易云：官方接口（避免失效的 Meting），风控/VIP 时自动走酷我兜底
     private func songUrlNetease(id: String) async throws -> String {
-        let url = URL(string: "\(metingBase)?server=netease&type=url&id=\(id)")!
-        var req = URLRequest(url: url)
+        var comps = URLComponents(string: "https://music.163.com/api/song/enhance/player/url")!
+        comps.queryItems = [
+            URLQueryItem(name: "ids", value: "[\(id)]"),
+            URLQueryItem(name: "br", value: "128000")
+        ]
+        var req = URLRequest(url: comps.url!)
         req.setValue(UserAgent, forHTTPHeaderField: "User-Agent")
-        let (data, resp) = try await session.data(for: req)
-        if let http = resp as? HTTPURLResponse, http.statusCode == 200,
-           let ct = http.allHeaderFields["Content-Type"] as? String,
-           ct.contains("audio") || ct.contains("mpeg") || ct.contains("octet") {
-            return url.absoluteString
+        req.setValue("https://music.163.com/", forHTTPHeaderField: "Referer")
+        let (data, _) = try await session.data(for: req)
+        if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let arr = json["data"] as? [[String: Any]],
+           let first = arr.first,
+           let u = first["url"] as? String, u.hasPrefix("http") {
+            return u
         }
-        if let str = String(data: data, encoding: .utf8) {
-            if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-               let u = json["url"] as? String, !u.isEmpty { return u }
-            if str.contains("vip") || str.contains("null") || str.count < 10 {
-                throw NSError(domain: "Play", code: -1, userInfo: [NSLocalizedDescriptionKey: "该歌曲为VIP歌曲，请开启免费模式或登录"])
-            }
-        }
-        throw NSError(domain: "Play", code: -1, userInfo: [NSLocalizedDescriptionKey: "该歌曲暂不支持试听"])
+        throw NSError(domain: "Play", code: -1, userInfo: [NSLocalizedDescriptionKey: "该歌曲为VIP歌曲或播放受限，请开启免费模式"])
     }
 
     // QQ 播放
@@ -417,22 +416,89 @@ class MusicAPI {
         ]
         var req = URLRequest(url: comps.url!)
         req.setValue(UserAgent, forHTTPHeaderField: "User-Agent")
+        req.setValue("http://www.kuwo.cn/", forHTTPHeaderField: "Referer")
         let (data, _) = try await session.data(for: req)
         if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-           let url = json["url"] as? String, !url.isEmpty {
+           let url = json["url"] as? String, !url.isEmpty,
+           url.hasPrefix("http"),
+           !url.contains("kuwo.cn/") || url.contains("kw-bj") || url.contains("antiserver") {
             return url
         }
-        throw NSError(domain: "Play", code: -1, userInfo: [NSLocalizedDescriptionKey: "该歌曲暂不支持试听"])
+        throw NSError(domain: "Play", code: -1, userInfo: [NSLocalizedDescriptionKey: "该歌曲暂不支持试听，已自动切换其他音源"])
     }
 
-    // ===== 歌词 =====
-    func getLyric(source: String, id: String) async throws -> String {
-        let server = source == "tencent" ? "tencent" : (source == "kugou" ? "kugou" : (source == "kuwo" ? "netease" : "netease"))
-        let url = URL(string: "\(metingBase)?server=\(server)&type=lrc&id=\(id)")!
-        var req = URLRequest(url: url)
+    // ===== 歌词（各平台官方接口） =====
+    func getLyric(source: String, id: String, songmid: String = "", kuwoRid: String = "") async throws -> String {
+        switch source {
+        case "tencent":
+            return try await lyricQQ(songmid: songmid)
+        case "kuwo":
+            return try await lyricKuwo(rid: kuwoRid)
+        default:
+            return try await lyricNetease(id: id)
+        }
+    }
+
+    private func lyricNetease(id: String) async throws -> String {
+        var comps = URLComponents(string: "https://music.163.com/api/song/lyric")!
+        comps.queryItems = [
+            URLQueryItem(name: "id", value: id),
+            URLQueryItem(name: "lv", value: "1"),
+            URLQueryItem(name: "kv", value: "1"),
+            URLQueryItem(name: "tv", value: "-1")
+        ]
+        var req = URLRequest(url: comps.url!)
         req.setValue(UserAgent, forHTTPHeaderField: "User-Agent")
         let (data, _) = try await session.data(for: req)
-        return String(data: data, encoding: .utf8) ?? ""
+        if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let lrc = json["lrc"] as? [String: Any],
+           let lyric = lrc["lyric"] as? String, !lyric.isEmpty {
+            return lyric
+        }
+        throw NSError(domain: "Lyric", code: -1, userInfo: [NSLocalizedDescriptionKey: "暂无歌词"])
+    }
+
+    private func lyricQQ(songmid: String) async throws -> String {
+        var comps = URLComponents(string: "https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg")!
+        comps.queryItems = [
+            URLQueryItem(name: "songmid", value: songmid),
+            URLQueryItem(name: "format", value: "json"),
+            URLQueryItem(name: "g_tk", value: "5381")
+        ]
+        var req = URLRequest(url: comps.url!)
+        req.setValue(UserAgent, forHTTPHeaderField: "User-Agent")
+        req.setValue("https://y.qq.com/", forHTTPHeaderField: "Referer")
+        let (data, _) = try await session.data(for: req)
+        if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let b64 = json["lyric"] as? String, !b64.isEmpty,
+           let decoded = Data(base64Encoded: b64),
+           let lyric = String(data: decoded, encoding: .utf8), !lyric.isEmpty {
+            return lyric
+        }
+        throw NSError(domain: "Lyric", code: -1, userInfo: [NSLocalizedDescriptionKey: "暂无歌词"])
+    }
+
+    private func lyricKuwo(rid: String) async throws -> String {
+        guard !rid.isEmpty else { throw NSError(domain: "Lyric", code: -1, userInfo: [NSLocalizedDescriptionKey: "暂无歌词"]) }
+        var comps = URLComponents(string: "http://m.kuwo.cn/newh5/singles/songinfoandlrc")!
+        comps.queryItems = [
+            URLQueryItem(name: "musicId", value: rid),
+            URLQueryItem(name: "httpsStatus", value: "1")
+        ]
+        var req = URLRequest(url: comps.url!)
+        req.setValue(UserAgent, forHTTPHeaderField: "User-Agent")
+        let (data, _) = try await session.data(for: req)
+        if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let d = json["data"] as? [String: Any],
+           let lrclist = d["lrclist"] as? [String: Any] {
+            let lines = lrclist.keys.sorted().compactMap { t in
+                let text = lrclist[t] as? String ?? ""
+                return text.isEmpty ? nil : "\(t) \(text)"
+            }
+            if !lines.isEmpty { return lines.joined(separator: "\n") }
+        }
+        throw NSError(domain: "Lyric", code: -1, userInfo: [NSLocalizedDescriptionKey: "暂无歌词"])
+    }
     }
 
     // ===== 网易云登录 =====

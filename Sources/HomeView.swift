@@ -1,126 +1,99 @@
 import SwiftUI
 
+// P2 推荐首页：每日推荐 / 私人漫游 / 排行榜(飙升榜·新歌榜·原创榜) / 推荐歌单
 struct HomeView: View {
     @EnvironmentObject var theme: ThemeManager
     @EnvironmentObject var player: MusicPlayer
-
-    let quickActions = ["每日推荐", "私人FM", "排行榜", "歌单"]
-    let playlists = [
-        ("🔥", "华语流行", "100万+", "华语"),
-        ("💧", "治愈轻音乐", "50万+", "轻音乐"),
-        ("🌙", "深夜电台", "30万+", "电台"),
-        ("⚡", "电子节拍", "80万+", "电子"),
-        ("🎸", "摇滚经典", "60万+", "摇滚"),
-        ("☕", "咖啡馆BGM", "40万+", "咖啡")
-    ]
     @State private var searchedKeyword: String?
     @State private var showSearchSheet = false
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                // 标题
-                HStack {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("奶油音乐").font(.largeTitle).bold().foregroundColor(theme.textColor)
-                        Text("发现好音乐").font(.subheadline).foregroundColor(theme.textSecondaryColor)
-                    }
+            VStack(alignment: .leading, spacing: 0) {
+                // 推荐 + 长按切换平台
+                HStack(alignment: .bottom) {
+                    Text("推荐")
+                        .font(.system(size: 28, weight: .bold))
+                        .foregroundColor(theme.textColor)
+                    Text("  长按这里可切换平台")
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.textSecondaryColor)
+                        .padding(.bottom, 5)
                     Spacer()
-                    Button {
-                        searchedKeyword = "周杰伦"
-                        showSearchSheet = true
-                    } label: {
-                        Image(systemName: "sparkles")
-                            .font(.system(size: 18, weight: .semibold))
-                            .foregroundColor(theme.primaryColor)
-                            .frame(width: 40, height: 40)
-                            .background(theme.primaryColor.opacity(0.12))
-                            .clipShape(Circle())
-                    }
                 }
-                .padding(.top, 20)
+                .padding(.top, 6)
+                .padding(.bottom, 14)
 
-                // 快捷入口（可点击 → 直接搜索）
-                LazyHGrid(rows: [GridItem(.flexible())], spacing: 16) {
-                    ForEach(quickActions, id: \.self) { b in
-                        Button {
-                            searchedKeyword = keywordFor(b)
-                            showSearchSheet = true
-                        } label: {
-                            VStack(spacing: 8) {
-                                Circle()
-                                    .fill(theme.primaryColor.opacity(0.15))
-                                    .frame(width: 52, height: 52)
-                                    .overlay(Image(systemName: iconFor(b)).foregroundColor(theme.primaryColor))
-                                Text(b).font(.caption2).foregroundColor(theme.textColor)
-                            }
-                            .padding(.vertical, 4)
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                    }
+                // 每日推荐 + 私人漫游
+                HStack(spacing: 10) {
+                    homeCard(emoji: "🎧", name: "每日推荐", sub: "32首 · 每天6:00更新",
+                             bg: LinearGradient(colors: [Color(.systemGray6), Color(.systemGray5)], startPoint: .topLeading, endPoint: .bottomTrailing))
+                        .onTapGesture { searchAndPlay("热门歌曲 2026") }
+                    homeCard(emoji: "📻", name: "私人漫游", sub: "从喜欢的歌开始漫游",
+                             bg: LinearGradient(colors: [Color.purple.opacity(0.25), Color.purple.opacity(0.12)], startPoint: .topLeading, endPoint: .bottomTrailing))
+                        .onTapGesture { searchAndPlay("抖音热歌 2026") }
                 }
                 .frame(height: 92)
+                .padding(.bottom, 18)
 
-                // 推荐歌单（可点击 → 搜索该类型）
-                Text("推荐歌单").font(.headline).foregroundColor(theme.textColor)
+                // 排行榜
+                Text("排行榜")
+                    .font(.system(size: 17, weight: .bold))
+                    .foregroundColor(theme.textColor)
+                    .padding(.bottom, 10)
 
-                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], spacing: 16) {
-                    ForEach(playlists, id: \.1) { emoji, name, count, kw in
+                HStack(spacing: 8) {
+                    rankBox(emoji: "🔥", name: "飙升榜", sub: "今日飙升", bg: Color(red: 1.0, green: 0.91, blue: 0.91))
+                        .onTapGesture { searchAndPlay("飙升榜 歌曲") }
+                    rankBox(emoji: "🎵", name: "新歌榜", sub: "最新发行", bg: Color(red: 0.92, green: 0.96, blue: 1.0))
+                        .onTapGesture { searchAndPlay("新歌榜 歌曲") }
+                    rankBox(emoji: "🎤", name: "原创榜", sub: "原创力量", bg: Color(red: 1.0, green: 0.97, blue: 0.88))
+                        .onTapGesture { searchAndPlay("原创榜 歌曲") }
+                }
+                .padding(.bottom, 18)
+
+                // 推荐歌单
+                Text("推荐歌单")
+                    .font(.system(size: 17, weight: .bold))
+                    .foregroundColor(theme.textColor)
+                    .padding(.bottom, 10)
+
+                let playlists = [
+                    ("🎶", "华语流行", "周杰伦 · 林俊杰 · 陈奕迅", "华语流行 歌曲"),
+                    ("🌙", "深夜emo", "薛之谦 · 毛不易 · 李荣浩", "薛之谦 歌曲"),
+                    ("⚡", "电音热浪", "抖音热歌 · 电音 · Remix", "电音 歌曲")
+                ]
+                HStack(spacing: 8) {
+                    ForEach(playlists, id: \.0) { emoji, name, desc, kw in
                         Button {
                             searchedKeyword = kw
                             showSearchSheet = true
                         } label: {
-                            VStack(alignment: .leading, spacing: 6) {
-                                RoundedRectangle(cornerRadius: 12)
-                                    .fill(LinearGradient(colors: [theme.primaryColor.opacity(0.6), theme.primaryColor.opacity(0.3)], startPoint: .topLeading, endPoint: .bottomTrailing))
-                                    .frame(height: 100)
-                                    .overlay(Text(emoji).font(.largeTitle))
-                                Text(name).font(.caption).bold().foregroundColor(theme.textColor).lineLimit(1)
-                                Text("\(count) 播放").font(.system(size: 10)).foregroundColor(theme.textSecondaryColor)
+                            VStack(alignment: .leading, spacing: 5) {
+                                Text(emoji).font(.system(size: 26))
+                                Text(name).font(.system(size: 12, weight: .bold)).foregroundColor(theme.textColor)
+                                Text(desc).font(.system(size: 9)).foregroundColor(theme.textSecondaryColor)
+                                    .lineLimit(2)
                             }
-                            .contentShape(Rectangle())
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(10)
+                            .background(cardBg(emoji))
+                            .clipShape(RoundedRectangle(cornerRadius: 10))
                         }
                         .buttonStyle(.plain)
                     }
                 }
 
-                // 正在播放
-                if player.currentSong != nil {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("正在播放").font(.headline).foregroundColor(theme.textColor)
-                        HStack {
-                            RoundedRectangle(cornerRadius: 10)
-                                .fill(theme.primaryColor.opacity(0.3))
-                                .frame(width: 50, height: 50)
-                                .overlay(AsyncImage(url: URL(string: player.currentSong?.coverUrl ?? "")) { img in
-                                    img.resizable().scaledToFill()
-                                } placeholder: {
-                                    Image(systemName: "music.note").foregroundColor(theme.primaryColor)
-                                })
-                                .clipShape(RoundedRectangle(cornerRadius: 10))
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(player.currentSong?.name ?? "").font(.subheadline).bold().foregroundColor(theme.textColor).lineLimit(1)
-                                Text(player.currentSong?.artist ?? "").font(.caption).foregroundColor(theme.textSecondaryColor)
-                            }
-                            Spacer()
-                            Button { player.togglePlay() } label: {
-                                Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
-                                    .foregroundColor(theme.primaryColor)
-                            }
-                        }
-                        .padding(14)
-                        .background {
-                            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                                .fill(.ultraThinMaterial)
-                                .opacity(theme.glassIntensity)
-                        }
-                    }
-                }
+                Text("长按顶部「推荐」可切换默认平台")
+                    .font(.system(size: 10))
+                    .foregroundColor(theme.textSecondaryColor.opacity(0.7))
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 22)
             }
-            .padding(.horizontal, 20)
+            .padding(.horizontal, 16)
             .padding(.bottom, 100)
         }
+        .background(theme.bgColor.ignoresSafeArea())
         .sheet(isPresented: $showSearchSheet) {
             QuickSearchSheet(keyword: searchedKeyword ?? "周杰伦")
                 .environmentObject(theme)
@@ -129,24 +102,40 @@ struct HomeView: View {
         }
     }
 
-    private func keywordFor(_ action: String) -> String {
-        switch action {
-        case "每日推荐": return "热门"
-        case "私人FM": return "随机"
-        case "排行榜": return "排行榜"
-        case "歌单": return "精选歌单"
-        default: return "周杰伦"
+    private func homeCard(emoji: String, name: String, sub: String, bg: LinearGradient) -> some View {
+        VStack(spacing: 4) {
+            Text(emoji).font(.system(size: 24))
+            Text(name).font(.system(size: 14, weight: .bold)).foregroundColor(theme.textColor)
+            Text(sub).font(.system(size: 10)).foregroundColor(theme.textSecondaryColor).lineLimit(1)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(bg)
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+    }
+
+    private func rankBox(emoji: String, name: String, sub: String, bg: Color) -> some View {
+        VStack(spacing: 3) {
+            Text(emoji).font(.system(size: 20))
+            Text(name).font(.system(size: 12, weight: .bold)).foregroundColor(theme.textColor)
+            Text(sub).font(.system(size: 9)).foregroundColor(theme.textSecondaryColor)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 10)
+        .background(bg)
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+    }
+
+    private func cardBg(_ emoji: String) -> Color {
+        switch emoji {
+        case "🎶": return Color(red: 0.99, green: 0.95, blue: 0.89)
+        case "🌙": return Color(red: 0.92, green: 0.94, blue: 0.99)
+        default: return Color(red: 0.95, green: 0.92, blue: 0.99)
         }
     }
 
-    private func iconFor(_ name: String) -> String {
-        switch name {
-        case "每日推荐": return "calendar"
-        case "私人FM": return "radio"
-        case "排行榜": return "chart.bar"
-        case "歌单": return "list.bullet"
-        default: return "music.note"
-        }
+    private func searchAndPlay(_ kw: String) {
+        searchedKeyword = kw
+        showSearchSheet = true
     }
 }
 
@@ -187,7 +176,7 @@ struct QuickSearchSheet: View {
                                 Text(song.artist).font(.caption).foregroundColor(theme.textSecondaryColor).lineLimit(1)
                             }
                             Spacer()
-                            Text("网易云").font(.system(size: 9))
+                            Text(song.sourceLabel).font(.system(size: 9))
                                 .foregroundColor(theme.primaryColor)
                                 .padding(.horizontal, 6).padding(.vertical, 2)
                                 .background(theme.primaryColor.opacity(0.15))

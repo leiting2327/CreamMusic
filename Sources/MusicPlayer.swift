@@ -240,6 +240,21 @@ class MusicPlayer: ObservableObject {
         playCurrent()
     }
 
+    // 随机播放当前队列
+    func shufflePlaylist() {
+        guard !playlist.isEmpty, !isLocalPlaying else { return }
+        var shuffled = playlist.shuffled()
+        // 把当前歌曲放到开头，无缝切换
+        if let cur = currentSong, let idx = shuffled.firstIndex(where: { $0.id == cur.id }) {
+            shuffled.swapAt(0, idx)
+        }
+        playlist = shuffled
+        currentIndex = 0
+        currentSong = shuffled[0]
+        playError = nil
+        playCurrent()
+    }
+
     func seek(to percent: Double) {
         guard let duration = player?.currentItem?.duration.seconds, duration > 0 else { return }
         let time = CMTime(seconds: duration * min(max(percent, 0), 1), preferredTimescale: 600)

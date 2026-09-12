@@ -9,6 +9,7 @@ struct MeView: View {
     @State private var playlists: [[String: Any]] = []
     @State private var showLogin = false
     @State private var isLoadingPlaylists = false
+    @State private var showSettings = false
 
     var body: some View {
         ScrollView {
@@ -103,6 +104,27 @@ struct MeView: View {
                         }
                     }
                 }
+                // 设置入口
+                Button {
+                    showSettings = true
+                } label: {
+                    HStack {
+                        Image(systemName: "gearshape")
+                            .foregroundColor(theme.primaryColor)
+                            .frame(width: 34, height: 34)
+                            .background(theme.primaryColor.opacity(0.12))
+                            .clipShape(Circle())
+                        Text("设置").font(.subheadline).foregroundColor(theme.textColor)
+                        Spacer()
+                        Image(systemName: "chevron.right").font(.caption).foregroundColor(theme.textSecondaryColor)
+                    }
+                    .padding(14)
+                    .background {
+                        RoundedRectangle(cornerRadius: 16)
+                            .fill(.ultraThinMaterial).opacity(theme.glassIntensity)
+                    }
+                }
+                .buttonStyle(.plain)
             }
             .padding(.horizontal, 20).padding(.top, 24)
         }
@@ -110,6 +132,12 @@ struct MeView: View {
         .sheet(isPresented: $showLogin) {
             LoginView(user: $user, playlists: $playlists, isLoading: $isLoadingPlaylists)
                 .environmentObject(theme)
+                .presentationDetents([.large])
+        }
+        .sheet(isPresented: $showSettings) {
+            SettingsView()
+                .environmentObject(theme)
+                .environmentObject(player)
                 .presentationDetents([.large])
         }
     }

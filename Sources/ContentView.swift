@@ -16,8 +16,8 @@ struct ContentView: View {
                         switch selectedTab {
                         case 0: HomeView()
                         case 1: SearchView()
-                        case 2: MeView()
-                        default: SettingsView()
+                        case 2: LibraryView()
+                        default: MeView()
                         }
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -133,10 +133,10 @@ struct GlassTabBar: View {
     @Binding var selected: Int
 
     let items = [
-        ("house.fill", "首页"),
+        ("house.fill", "主页"),
         ("magnifyingglass", "搜索"),
-        ("person.fill", "我的"),
-        ("gearshape.fill", "设置")
+        ("music.note.list", "音乐库"),
+        ("person.fill", "我的")
     ]
 
     var body: some View {
