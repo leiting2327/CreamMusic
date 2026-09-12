@@ -8,6 +8,10 @@ struct LocalSong: Identifiable, Codable {
     var fileName: String
     var fileSize: Int64
     var downloadDate: Date
+
+    enum CodingKeys: String, CodingKey {
+        case song, quality, fileName, fileSize, downloadDate
+    }
 }
 
 // 本地音频管理：下载/存储/统计/删除/音质管理
