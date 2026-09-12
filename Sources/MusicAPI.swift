@@ -245,47 +245,36 @@ class MusicAPI {
             URLQueryItem(name: "show_copyright_off", value: "1"),
             URLQueryItem(name: "newver", value: "1"),
             URLQueryItem(name: "ft", value: "music"),
+            URLQueryItem(name: "rformat", value: "json"),
             URLQueryItem(name: "encoding", value: "utf8"),
+            URLQueryItem(name: "mobi", value: "1"),
         ]
         var req = URLRequest(url: comps.url!)
         req.setValue(UserAgent, forHTTPHeaderField: "User-Agent")
+        req.setValue("http://www.kuwo.cn/", forHTTPHeaderField: "Referer")
         let (data, _) = try await session.data(for: req)
-        let text = String(data: data, encoding: .utf8) ?? ""
-        // 解析 key=value 格式，每首歌以 "-----" 分隔
-        let blocks = text.components(separatedBy: "-----").filter { $0.contains("MUSICRID") }
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let arr = json["abslist"] as? [[String: Any]] else { return [] }
         var songs: [Song] = []
-        for block in blocks.prefix(30) {
-            let lines = block.components(separatedBy: "\n")
-            var rid = "", name = "", artist = "", album = "", pic = "", dur = 0, mp3size = 0, isVip = false
-            for line in lines {
-                let kv = line.split(separator: "=", maxSplits: 1).map(String.init)
-                guard kv.count == 2 else { continue }
-                let key = kv[0].trimmingCharacters(in: .whitespaces)
-                let val = kv[1].trimmingCharacters(in: .whitespaces)
-                switch key {
-                case "MUSICRID": rid = val.replacingOccurrences(of: "MUSIC_", with: "")
-                case "SONGNAME": name = val
-                case "ARTIST": artist = val
-                case "ALBUM": album = val
-                case "web_albumpic_short": pic = "https://img1.kuwo.cn/star/albumcover/\(val)"
-                case "web_artistpic_short": if pic.isEmpty { pic = "https://img1.kuwo.cn/star/artistcover/\(val)" }
-                case "MP3SIZE": mp3size = Int(val) ?? 0
-                case "PAY": isVip = val.contains("1") || val.lowercased().contains("vip")
-                default: break
-                }
-            }
+        for o in arr.prefix(30) {
+            let rid = (o["MUSICRID"] as? String ?? "").replacingOccurrences(of: "MUSIC_", with: "")
             guard !rid.isEmpty else { continue }
+            var pic = o["web_albumpic_short"] as? String ?? ""
+            if !pic.isEmpty && !pic.hasPrefix("http") {
+                pic = "https://img1.kuwo.cn/star/albumcover/\(pic)"
+            }
+            let pay = o["PAY"] as? Int ?? 0
             songs.append(Song(
                 id: rid,
-                name: name,
-                artist: artist,
-                album: album,
+                name: o["SONGNAME"] as? String ?? "未知歌曲",
+                artist: o["ARTIST"] as? String ?? "未知歌手",
+                album: o["ALBUM"] as? String ?? "",
                 coverUrl: pic,
                 source: "kuwo",
-                duration: mp3size > 0 ? mp3size / 15000 : 0,
+                duration: o["DURATION"] as? Int ?? 0,
                 kuwoRid: rid,
                 kuwoPic: pic,
-                isVip: isVip
+                isVip: pay > 0
             ))
         }
         return songs
@@ -367,39 +356,41 @@ class MusicAPI {
         return purl.hasPrefix("http") ? purl : "\(host)\(purl)"
     }
 
-    // 酷狗播放
+    // 酷狗播放（gateway 接口已失效，改移动端 playInfo + 酷我兜底）
     private func songUrlKugou(song: Song) async throws -> String {
         guard !song.hash.isEmpty else { throw NSError(domain: "Play", code: -1, userInfo: [NSLocalizedDescriptionKey: "无效的酷狗歌曲"]) }
-        let mid = "10000"
-        let salt = "57ae12eb6890223e355ccfcb74edf70d"
-        let appid = "1005"
-        let uid = "0"
-        let fileHash = song.hash.lowercased()
-        let key = Data("\(fileHash)\(salt)\(appid)\(mid)\(uid)".utf8).md5Hex()
-        var comps = URLComponents(string: "https://gateway.kugou.com/v5/url")!
+        // 通道1：移动端 playInfo
+        var comps = URLComponents(string: "https://m.kugou.com/app/i/getSongInfo.php")!
         comps.queryItems = [
-            URLQueryItem(name: "album_id", value: "0"),
-            URLQueryItem(name: "area_code", value: "1"),
-            URLQueryItem(name: "hash", value: fileHash),
-            URLQueryItem(name: "quality", value: "128"),
-            URLQueryItem(name: "behavior", value: "play"),
-            URLQueryItem(name: "pid", value: "2"),
-            URLQueryItem(name: "cmd", value: "26"),
-            URLQueryItem(name: "page_id", value: "151369488"),
-            URLQueryItem(name: "clientver", value: "11430"),
-            URLQueryItem(name: "key", value: key),
-            URLQueryItem(name: "appid", value: appid),
-            URLQueryItem(name: "mid", value: mid),
-            URLQueryItem(name: "uid", value: uid),
+            URLQueryItem(name: "cmd", value: "playInfo"),
+            URLQueryItem(name: "hash", value: song.hash.lowercased()),
         ]
         var req = URLRequest(url: comps.url!)
         req.setValue(UserAgent, forHTTPHeaderField: "User-Agent")
-        req.setValue("trackercdn.kugou.com", forHTTPHeaderField: "x-router")
+        req.setValue("https://m.kugou.com/", forHTTPHeaderField: "Referer")
         let (data, _) = try await session.data(for: req)
-        if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-            let d = (json["data"] as? [String: Any]) ?? json
-            if let playUrl = d["play_url"] as? String, !playUrl.isEmpty { return playUrl }
-            if let url = d["url"] as? String, !url.isEmpty { return url }
+        if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let playUrl = json["url"] as? String, playUrl.hasPrefix("http") {
+            return playUrl
+        }
+        // 通道2：酷狗网页接口
+        var comps2 = URLComponents(string: "https://www.kugou.com/yy/index.php")!
+        comps2.queryItems = [
+            URLQueryItem(name: "r", value: "play/getdata"),
+            URLQueryItem(name: "hash", value: song.hash.lowercased()),
+        ]
+        var req2 = URLRequest(url: comps2.url!)
+        req2.setValue(UserAgent, forHTTPHeaderField: "User-Agent")
+        req2.setValue("https://www.kugou.com/", forHTTPHeaderField: "Referer")
+        let (data2, _) = try await session.data(for: req2)
+        if let json2 = try? JSONSerialization.jsonObject(with: data2) as? [String: Any],
+           let d = json2["data"] as? [String: Any],
+           let pu = d["play_url"] as? String, pu.hasPrefix("http") {
+            return pu
+        }
+        // 通道3：酷我同名兜底（酷狗源不可用时保证能播）
+        if let fallback = try? await fallbackKuwo(name: song.name, artist: song.artist) {
+            return fallback
         }
         throw NSError(domain: "Play", code: -1, userInfo: [NSLocalizedDescriptionKey: "该歌曲为VIP歌曲，请开启免费模式或登录"])
     }
