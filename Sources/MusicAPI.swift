@@ -499,7 +499,6 @@ class MusicAPI {
         }
         throw NSError(domain: "Lyric", code: -1, userInfo: [NSLocalizedDescriptionKey: "暂无歌词"])
     }
-    }
 
     // ===== 网易云登录 =====
     func loginPhone(phone: String, password: String) async throws -> User {
