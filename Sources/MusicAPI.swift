@@ -46,7 +46,7 @@ struct User: Codable {
 }
 
 // 音质档位
-enum AudioQuality: String, CaseIterable, Identifiable {
+enum AudioQuality: String, CaseIterable, Identifiable, Codable {
     case standard = "标准音质"
     case high = "高清音质"
     case lossless = "无损音质"
