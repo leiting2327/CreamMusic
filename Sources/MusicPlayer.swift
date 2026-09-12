@@ -13,6 +13,7 @@ class MusicPlayer: ObservableObject {
     @Published var isAirPlayActive = false
     @Published var isLocalPlaying = false // 是否在播本地文件
     @Published var playError: String? // 播放错误提示
+    @Published var volume: Float = 0.8 // 音量（Apple Music 播放器音量条）
 
     var player: AVPlayer?
     private var timer: Timer?
@@ -153,6 +154,7 @@ class MusicPlayer: ObservableObject {
         stopPlayback(keepSession: true)
         let item = AVPlayerItem(url: url)
         player = AVPlayer(playerItem: item)
+        player?.volume = volume
         player?.play()
         isPlaying = true
         startTimer()
@@ -214,6 +216,12 @@ class MusicPlayer: ObservableObject {
         }
         updateLiveActivity()
         updateNowPlaying()
+    }
+
+    // 音量（Apple Music 音量条实时生效）
+    func setVolume(_ v: Float) {
+        volume = v
+        player?.volume = v
     }
 
     func next() {

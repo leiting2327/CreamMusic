@@ -2,13 +2,13 @@ import SwiftUI
 import AVKit
 import MediaPlayer
 
-// 网易云风格全屏播放器（参考用户参考图）
+// Apple Music 风格全屏播放器（参考用户需求：和苹果一模一样）
 struct PlayerView: View {
     @EnvironmentObject var theme: ThemeManager
     @EnvironmentObject var player: MusicPlayer
     @Environment(\.dismiss) var dismiss
     @State private var isDragging = false
-    @State private var showLyrics = true
+    @State private var showLyrics = false
     @State private var lyricText = "歌词加载中…"
     @State private var showDownloadSheet = false
     @State private var showCloseConfirm = false
@@ -19,14 +19,14 @@ struct PlayerView: View {
 
     var body: some View {
         ZStack {
-            // 封面模糊背景
+            // 封面模糊背景（Apple Music 风格）
             coverBackground.ignoresSafeArea()
 
             // 毛玻璃叠加
             Rectangle().fill(.ultraThinMaterial).opacity(theme.glassIntensity * 0.55).ignoresSafeArea()
 
             VStack(spacing: 0) {
-                // 顶部拖动条 + 关闭按钮（可关掉播放器）
+                // ===== 顶部栏（Apple Music：左关闭 / 中歌名歌手 / 右更多） =====
                 HStack(spacing: 12) {
                     Button {
                         showCloseConfirm = true
@@ -47,8 +47,14 @@ struct PlayerView: View {
                     }
                     Spacer()
                     VStack(spacing: 2) {
-                        Text("正在播放").font(.caption).foregroundColor(theme.textSecondaryColor)
-                        Text(player.currentSong?.album ?? "").font(.subheadline).bold().foregroundColor(theme.textColor).lineLimit(1)
+                        Text(player.currentSong?.name ?? "未在播放")
+                            .font(.subheadline).bold()
+                            .foregroundColor(theme.textColor)
+                            .lineLimit(1)
+                        Text("\(player.currentSong?.artist ?? "") · \(player.currentSong?.album ?? "")")
+                            .font(.caption2)
+                            .foregroundColor(theme.textSecondaryColor)
+                            .lineLimit(1)
                     }
                     Spacer()
                     Button {} label: {
@@ -72,97 +78,81 @@ struct PlayerView: View {
                         .padding(.top, 4)
                 }
 
-                ScrollView {
-                    VStack(spacing: 18) {
-                        // 封面
-                        ZStack {
-                            RoundedRectangle(cornerRadius: 12)
-                                .fill(
-                                    LinearGradient(
-                                        colors: [theme.primaryColor.opacity(0.55), theme.primaryColor.opacity(0.25)],
-                                        startPoint: .topLeading, endPoint: .bottomTrailing
-                                    )
-                                )
-                                .overlay(
-                                    AsyncImage(url: URL(string: player.currentSong?.coverUrl ?? "")) { img in
-                                        img.resizable().scaledToFill()
-                                    } placeholder: {
-                                        Image(systemName: "music.note").font(.system(size: 80)).foregroundColor(.white.opacity(0.85))
-                                    }
-                                )
-                                .clipShape(RoundedRectangle(cornerRadius: 12))
-                                .shadow(color: theme.primaryColor.opacity(0.35), radius: 30, y: 12)
-                        }
-                        .frame(width: 290, height: 290)
-                        .rotation3DEffect(.degrees(isDragging ? 3 : 0), axis: (x: 0, y: 1, z: 0))
-
-                        // 歌名/歌手/专辑
-                        VStack(spacing: 5) {
-                            HStack(spacing: 8) {
-                                Text(player.currentSong?.name ?? "")
-                                    .font(.title2).bold()
-                                    .foregroundColor(theme.textColor)
-                                    .lineLimit(1)
-                                // 来源标注
-                                Text(player.currentSong?.sourceLabel ?? "")
-                                    .font(.system(size: 9))
-                                    .foregroundColor(.white)
-                                    .padding(.horizontal, 6).padding(.vertical, 2)
-                                    .background(theme.primaryColor)
-                                    .cornerRadius(4)
-                                // VIP 标注
-                                if player.currentSong?.isVip == true {
-                                    Text("VIP")
-                                        .font(.system(size: 9, weight: .bold))
-                                        .foregroundColor(.white)
-                                        .padding(.horizontal, 6).padding(.vertical, 2)
-                                        .background(LinearGradient(colors: [.orange, .red], startPoint: .leading, endPoint: .trailing))
-                                        .cornerRadius(4)
-                                }
-                                Spacer()
-                                // 下载按钮
-                                Button {
-                                    showDownloadSheet = true
-                                } label: {
-                                    Image(systemName: "arrow.down.circle")
-                                        .font(.system(size: 22))
-                                        .foregroundColor(theme.primaryColor)
-                                }
-                                Button {} label: {
-                                    Image(systemName: "heart")
-                                        .font(.system(size: 22))
-                                        .foregroundColor(theme.textSecondaryColor)
-                                }
+                // ===== 中部：大封面（Apple Music 风格，居中大图带投影） =====
+                ZStack {
+                    RoundedRectangle(cornerRadius: 16)
+                        .fill(
+                            LinearGradient(
+                                colors: [theme.primaryColor.opacity(0.55), theme.primaryColor.opacity(0.25)],
+                                startPoint: .topLeading, endPoint: .bottomTrailing
+                            )
+                        )
+                        .overlay(
+                            AsyncImage(url: URL(string: player.currentSong?.coverUrl ?? "")) { img in
+                                img.resizable().scaledToFill()
+                            } placeholder: {
+                                Image(systemName: "music.note").font(.system(size: 90)).foregroundColor(.white.opacity(0.85))
                             }
-                            Text("\(player.currentSong?.artist ?? "") · \(player.currentSong?.album ?? "")")
-                                .font(.subheadline)
-                                .foregroundColor(theme.textSecondaryColor)
-                                .lineLimit(1)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                        .padding(.horizontal, 24)
+                        )
+                        .clipShape(RoundedRectangle(cornerRadius: 16))
+                        .shadow(color: .black.opacity(0.3), radius: 24, y: 10)
+                }
+                .frame(width: 340, height: 340)
+                .padding(.top, 26)
+                .rotation3DEffect(.degrees(isDragging ? 3 : 0), axis: (x: 0, y: 1, z: 0))
 
-                        // 歌词（网易云风格，滚动区）
-                        if showLyrics, let song = player.currentSong {
-                            ScrollViewReader { proxy in
-                                ScrollView {
-                                    Text(lyricText)
-                                        .font(.system(size: 14, weight: .regular))
-                                        .foregroundColor(theme.textSecondaryColor)
-                                        .lineSpacing(8)
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                        .padding(.vertical, 10)
-                                }
-                                .frame(height: 110)
-                            }
+                // ===== 歌名 / 歌手（Apple Music：居中） =====
+                VStack(spacing: 6) {
+                    HStack(spacing: 8) {
+                        // 来源标注
+                        if let src = player.currentSong?.sourceLabel, !src.isEmpty {
+                            Text(src)
+                                .font(.system(size: 9))
+                                .foregroundColor(theme.primaryColor)
+                                .padding(.horizontal, 6).padding(.vertical, 2)
+                                .background(theme.primaryColor.opacity(0.15))
+                                .cornerRadius(4)
+                        }
+                        // VIP 标注
+                        if player.currentSong?.isVip == true {
+                            Text("VIP")
+                                .font(.system(size: 9, weight: .bold))
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 6).padding(.vertical, 2)
+                                .background(LinearGradient(colors: [.orange, .red], startPoint: .leading, endPoint: .trailing))
+                                .cornerRadius(4)
                         }
                     }
-                    .padding(.top, 6)
+                    Text(player.currentSong?.name ?? "")
+                        .font(.title2).bold()
+                        .foregroundColor(theme.textColor)
+                        .lineLimit(1)
+                        .multilineTextAlignment(.center)
+                    Text(player.currentSong?.artist ?? "")
+                        .font(.subheadline)
+                        .foregroundColor(theme.textSecondaryColor)
+                        .lineLimit(1)
+                        .multilineTextAlignment(.center)
                 }
+                .padding(.horizontal, 24)
+                .padding(.top, 18)
+
+                // 歌词按钮（点击弹出歌词）
+                Button {
+                    withAnimation { showLyrics.toggle() }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "text.quote")
+                        Text("歌词")
+                    }
+                    .font(.system(size: 12))
+                    .foregroundColor(showLyrics ? theme.primaryColor : theme.textSecondaryColor)
+                }
+                .padding(.top, 8)
 
                 Spacer(minLength: 0)
 
-                // 进度条
+                // ===== 进度条（Apple Music：Slider + 时间） =====
                 VStack(spacing: 4) {
                     Slider(
                         value: Binding(
@@ -187,57 +177,106 @@ struct PlayerView: View {
                 }
                 .padding(.horizontal, 24)
 
-                // 控制按钮（参考图：上一首/播放/下一首）
-                HStack(spacing: 42) {
+                // ===== 播放控制（Apple Music：backward / play / forward） =====
+                HStack(spacing: 46) {
                     Button { player.prev() } label: {
                         Image(systemName: "backward.fill")
-                            .font(.system(size: 28, weight: .semibold))
+                            .font(.system(size: 26, weight: .semibold))
                             .foregroundColor(theme.textColor)
                     }
                     Button { player.togglePlay() } label: {
                         ZStack {
-                            Circle().fill(theme.textColor).frame(width: 62, height: 62)
+                            Circle().fill(theme.textColor).frame(width: 66, height: 66)
                             Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
-                                .font(.system(size: 25, weight: .semibold))
+                                .font(.system(size: 26, weight: .semibold))
                                 .foregroundColor(theme.bgColor)
                                 .offset(x: player.isPlaying ? 0 : 2)
                         }
                     }
                     Button { player.next() } label: {
                         Image(systemName: "forward.fill")
-                            .font(.system(size: 28, weight: .semibold))
+                            .font(.system(size: 26, weight: .semibold))
                             .foregroundColor(theme.textColor)
                     }
                 }
-                .padding(.top, 12)
+                .padding(.top, 14)
 
-                // 底部工具条：评论/循环/歌单/音量/AirPlay
-                HStack(spacing: 24) {
+                // ===== 音量条（Apple Music 特色） =====
+                HStack(spacing: 10) {
+                    Image(systemName: "speaker.fill").font(.system(size: 12)).foregroundColor(theme.textSecondaryColor)
+                    Slider(
+                        value: Binding(
+                            get: { player.volume },
+                            set: { player.setVolume($0) }
+                        ),
+                        in: 0...1
+                    )
+                    .tint(theme.textSecondaryColor)
+                    Image(systemName: "speaker.wave.3.fill").font(.system(size: 12)).foregroundColor(theme.textSecondaryColor)
+                }
+                .padding(.horizontal, 24)
+                .padding(.top, 10)
+
+                // ===== 底部工具条（Apple Music：评论/下载/歌词/AirPlay） =====
+                HStack(spacing: 30) {
                     Button {
                         loadComments()
                         showComments = true
                     } label: {
-                        Image(systemName: "bubble.left").font(.system(size: 15)).foregroundColor(theme.textSecondaryColor)
+                        Image(systemName: "bubble.left").font(.system(size: 16)).foregroundColor(theme.textSecondaryColor)
                     }
-                    Button {} label: {
-                        Image(systemName: "repeat").font(.system(size: 15)).foregroundColor(theme.textSecondaryColor)
-                    }
-                    Button {} label: {
-                        Image(systemName: "list.bullet").font(.system(size: 15)).foregroundColor(theme.textSecondaryColor)
+                    Button {
+                        showDownloadSheet = true
+                    } label: {
+                        Image(systemName: "arrow.down.circle").font(.system(size: 17)).foregroundColor(theme.textSecondaryColor)
                     }
                     Spacer()
                     Button {
                         withAnimation { showLyrics.toggle() }
                     } label: {
                         Image(systemName: "text.quote")
-                            .font(.system(size: 15))
+                            .font(.system(size: 16))
                             .foregroundColor(showLyrics ? theme.primaryColor : theme.textSecondaryColor)
                     }
-                    AirPlayButton(tintColor: UIColor(theme.primaryColor)).frame(width: 22, height: 22)
+                    AirPlayButton(tintColor: UIColor(theme.primaryColor)).frame(width: 24, height: 24)
                 }
-                .padding(.horizontal, 30)
+                .padding(.horizontal, 32)
                 .padding(.vertical, 14)
                 .padding(.bottom, 6)
+            }
+
+            // ===== 歌词弹层（Apple Music 风格） =====
+            if showLyrics, let song = player.currentSong {
+                VStack {
+                    Spacer()
+                    VStack(spacing: 10) {
+                        HStack {
+                            Text("歌词").font(.headline).foregroundColor(theme.textColor)
+                            Spacer()
+                            Button {
+                                withAnimation { showLyrics = false }
+                            } label: {
+                                Image(systemName: "xmark.circle.fill")
+                                    .font(.system(size: 20))
+                                    .foregroundColor(theme.textSecondaryColor)
+                            }
+                        }
+                        .padding(.horizontal, 20).padding(.top, 16)
+                        ScrollView {
+                            Text(lyricText)
+                                .font(.system(size: 15, weight: .regular))
+                                .foregroundColor(theme.textColor)
+                                .lineSpacing(8)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal, 20).padding(.vertical, 10)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: 360)
+                    .background(.ultraThinMaterial)
+                    .cornerRadius(20, corners: [.topLeft, .topRight])
+                    .transition(.move(edge: .bottom))
+                }
+                .ignoresSafeArea()
             }
         }
         .onAppear {
@@ -527,5 +566,26 @@ struct CommentsView: View {
             }
         }
         .background(theme.bgColor)
+    }
+}
+
+// 指定圆角扩展（Apple Music 歌词弹层用）
+extension View {
+    func cornerRadius(_ radius: CGFloat, corners: UIRectCorner) -> some View {
+        clipShape(RoundedCorner(radius: radius, corners: corners))
+    }
+}
+
+struct RoundedCorner: Shape {
+    var radius: CGFloat = .infinity
+    var corners: UIRectCorner = .allCorners
+
+    func path(in rect: CGRect) -> Path {
+        let path = UIBezierPath(
+            roundedRect: rect,
+            byRoundingCorners: corners,
+            cornerRadii: CGSize(width: radius, height: radius)
+        )
+        return Path(path.cgPath)
     }
 }
