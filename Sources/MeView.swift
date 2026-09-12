@@ -83,7 +83,8 @@ struct MeView: View {
                             .font(.caption).foregroundColor(theme.textSecondaryColor)
                             .padding(.vertical, 20)
                     } else {
-                        ForEach(playlists, id: \.self) { pl in
+                        ForEach(playlists.indices, id: \.self) { i in
+                            let pl = playlists[i]
                             HStack(spacing: 12) {
                                 RoundedRectangle(cornerRadius: 8)
                                     .fill(theme.primaryColor.opacity(0.2))

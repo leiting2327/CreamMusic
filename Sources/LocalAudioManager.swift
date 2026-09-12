@@ -62,7 +62,7 @@ class LocalAudioManager: ObservableObject {
             return ls
         }
 
-        let (data, _) = try await downloadData(from: url, progress: progress)
+        let data = try await downloadData(from: url, progress: progress)
         try data.write(to: dest)
         let size = Int64(data.count)
         let ls = LocalSong(song: song, quality: quality, fileName: fileName, fileSize: size, downloadDate: Date())
