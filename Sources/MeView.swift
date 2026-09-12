@@ -124,12 +124,17 @@ struct LoginView: View {
     @Binding var isLoading: Bool
 
     @State private var selectedPlatform = "netease"
+    @State private var neteaseLoginMode = 0 // 0=密码 1=验证码 2=扫码
     @State private var phone = ""
     @State private var password = ""
+    @State private var captcha = ""
     @State private var isLoadingLogin = false
     @State private var errorMsg: String?
     @State private var qrImageURL: String?
     @State private var qrSig: String?
+    @State private var neteaseUnikey: String?
+    @State private var neteaseQRImage: UIImage?
+    @State private var qrPolling = false
 
     var body: some View {
         VStack(spacing: 16) {
@@ -144,31 +149,101 @@ struct LoginView: View {
             .padding(.horizontal, 24)
 
             if selectedPlatform == "netease" {
-                // 网易云：手机号+密码
-                VStack(spacing: 12) {
-                    TextField("手机号", text: $phone)
-                        .keyboardType(.phonePad)
-                        .textFieldStyle(.roundedBorder)
-                        .font(.subheadline)
-                    SecureField("密码", text: $password)
-                        .textFieldStyle(.roundedBorder)
-                        .font(.subheadline)
+                // 网易云：登录方式切换
+                HStack(spacing: 10) {
+                    modeButton(0, "密码登录")
+                    modeButton(1, "验证码登录")
+                    modeButton(2, "扫码登录")
                 }
                 .padding(.horizontal, 24)
 
-                Button {
-                    login()
-                } label: {
-                    Text(isLoadingLogin ? "登录中…" : "登录")
-                        .font(.subheadline).bold()
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 12)
-                        .background(theme.primaryColor)
-                        .foregroundColor(.white)
-                        .cornerRadius(12)
+                if neteaseLoginMode == 0 {
+                    // 密码登录
+                    VStack(spacing: 12) {
+                        TextField("手机号", text: $phone)
+                            .keyboardType(.phonePad)
+                            .textFieldStyle(.roundedBorder)
+                            .font(.subheadline)
+                        SecureField("密码", text: $password)
+                            .textFieldStyle(.roundedBorder)
+                            .font(.subheadline)
+                    }
+                    .padding(.horizontal, 24)
+
+                    Button {
+                        login()
+                    } label: {
+                        Text(isLoadingLogin ? "登录中…" : "登录")
+                            .font(.subheadline).bold()
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 12)
+                            .background(theme.primaryColor)
+                            .foregroundColor(.white)
+                            .cornerRadius(12)
+                    }
+                    .padding(.horizontal, 24)
+                    .disabled(isLoadingLogin)
+                } else if neteaseLoginMode == 1 {
+                    // 验证码登录
+                    VStack(spacing: 12) {
+                        TextField("手机号", text: $phone)
+                            .keyboardType(.phonePad)
+                            .textFieldStyle(.roundedBorder)
+                            .font(.subheadline)
+                        HStack {
+                            TextField("验证码", text: $captcha)
+                                .keyboardType(.numberPad)
+                                .textFieldStyle(.roundedBorder)
+                                .font(.subheadline)
+                            Button("获取验证码") {
+                                sendCaptcha()
+                            }
+                            .font(.system(size: 12))
+                            .foregroundColor(theme.primaryColor)
+                            .disabled(isLoadingLogin)
+                        }
+                    }
+                    .padding(.horizontal, 24)
+
+                    Button {
+                        loginCaptcha()
+                    } label: {
+                        Text(isLoadingLogin ? "登录中…" : "验证码登录")
+                            .font(.subheadline).bold()
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 12)
+                            .background(theme.primaryColor)
+                            .foregroundColor(.white)
+                            .cornerRadius(12)
+                    }
+                    .padding(.horizontal, 24)
+                    .disabled(isLoadingLogin)
+                } else {
+                    // 扫码登录
+                    VStack(spacing: 14) {
+                        if let img = neteaseQRImage {
+                            Image(uiImage: img)
+                                .interpolation(.none)
+                                .resizable()
+                                .frame(width: 200, height: 200)
+                                .cornerRadius(12)
+                            Text("请使用网易云 App 扫码登录")
+                                .font(.caption).foregroundColor(theme.textSecondaryColor)
+                            if qrPolling {
+                                ProgressView("等待扫码…")
+                            } else {
+                                Button("重新获取二维码") { loadNeteaseQR() }
+                                    .font(.caption).foregroundColor(theme.primaryColor)
+                            }
+                        } else {
+                            ProgressView("获取二维码…")
+                            Button("重新获取") { loadNeteaseQR() }
+                                .font(.caption).foregroundColor(theme.primaryColor)
+                        }
+                    }
+                    .padding(.top, 30)
+                    .onAppear { loadNeteaseQR() }
                 }
-                .padding(.horizontal, 24)
-                .disabled(isLoadingLogin)
             } else if selectedPlatform == "tencent" {
                 // QQ 音乐：扫码登录
                 VStack(spacing: 14) {
@@ -232,6 +307,21 @@ struct LoginView: View {
         .buttonStyle(.plain)
     }
 
+    private func modeButton(_ id: Int, _ name: String) -> some View {
+        Button {
+            neteaseLoginMode = id
+            errorMsg = nil
+        } label: {
+            Text(name)
+                .font(.system(size: 12)).bold()
+                .padding(.horizontal, 12).padding(.vertical, 6)
+                .background(neteaseLoginMode == id ? theme.primaryColor : theme.primaryColor.opacity(0.12))
+                .foregroundColor(neteaseLoginMode == id ? .white : theme.primaryColor)
+                .cornerRadius(8)
+        }
+        .buttonStyle(.plain)
+    }
+
     private func login() {
         guard !phone.isEmpty, !password.isEmpty else {
             errorMsg = "请输入手机号和密码"
@@ -268,6 +358,95 @@ struct LoginView: View {
                 }
             } catch {
                 await MainActor.run { errorMsg = error.localizedDescription }
+            }
+        }
+    }
+
+    // 网易云扫码：获取二维码
+    private func loadNeteaseQR() {
+        neteaseQRImage = nil
+        neteaseUnikey = nil
+        qrPolling = false
+        Task {
+            do {
+                let unikey = try await MusicAPI.shared.neteaseQRCode()
+                let url = URL(string: "https://music.163.com/login?codekey=\(unikey)")!
+                let (data, _) = try await URLSession.shared.data(from: url)
+                await MainActor.run {
+                    neteaseUnikey = unikey
+                    neteaseQRImage = UIImage(data: data)
+                    qrPolling = true
+                    startQRPolling(unikey: unikey)
+                }
+            } catch {
+                await MainActor.run { errorMsg = error.localizedDescription }
+            }
+        }
+    }
+
+    // 网易云扫码：轮询状态
+    private func startQRPolling(unikey: String) {
+        Task {
+            while qrPolling && neteaseUnikey == unikey {
+                do {
+                    let (code, u) = try await MusicAPI.shared.neteaseQRCheck(unikey: unikey)
+                    await MainActor.run {
+                        if code == 803, let u {
+                            qrPolling = false
+                            user = u
+                            dismiss()
+                            Task { await loadPlaylists(platform: "netease") }
+                        } else if code == 802 {
+                            errorMsg = "已扫码，请在手机上确认"
+                        }
+                    }
+                } catch {}
+                if qrPolling {
+                    try? await Task.sleep(nanoseconds: 2_000_000_000)
+                }
+            }
+        }
+    }
+
+    // 网易云发送验证码
+    private func sendCaptcha() {
+        guard !phone.isEmpty else {
+            errorMsg = "请输入手机号"
+            return
+        }
+        errorMsg = nil
+        Task {
+            do {
+                try await MusicAPI.shared.sendSmsCaptcha(phone: phone)
+                await MainActor.run { errorMsg = "验证码已发送，请注意查收" }
+            } catch {
+                await MainActor.run { errorMsg = error.localizedDescription }
+            }
+        }
+    }
+
+    // 网易云验证码登录
+    private func loginCaptcha() {
+        guard !phone.isEmpty, !captcha.isEmpty else {
+            errorMsg = "请输入手机号和验证码"
+            return
+        }
+        isLoadingLogin = true
+        errorMsg = nil
+        Task {
+            do {
+                let u = try await MusicAPI.shared.loginPhoneCaptcha(phone: phone, captcha: captcha)
+                await MainActor.run {
+                    user = u
+                    isLoadingLogin = false
+                    dismiss()
+                }
+                await loadPlaylists(platform: "netease")
+            } catch {
+                await MainActor.run {
+                    errorMsg = error.localizedDescription
+                    isLoadingLogin = false
+                }
             }
         }
     }

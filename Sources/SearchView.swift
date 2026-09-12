@@ -134,8 +134,26 @@ struct SongRow: View {
                 .clipShape(RoundedRectangle(cornerRadius: 8))
 
             VStack(alignment: .leading, spacing: 3) {
-                Text(song.name).font(.subheadline).bold().foregroundColor(theme.textColor).lineLimit(1)
+                HStack(spacing: 4) {
+                    Text(song.name).font(.subheadline).bold().foregroundColor(theme.textColor).lineLimit(1)
+                    // VIP 标注
+                    if song.isVip {
+                        Text("VIP")
+                            .font(.system(size: 8, weight: .bold))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 4).padding(.vertical, 1)
+                            .background(LinearGradient(colors: [.orange, .red], startPoint: .leading, endPoint: .trailing))
+                            .cornerRadius(3)
+                    }
+                }
                 Text(song.artist).font(.caption).foregroundColor(theme.textSecondaryColor).lineLimit(1)
+                // 专辑显示
+                if !song.album.isEmpty {
+                    Text("专辑：\(song.album)")
+                        .font(.system(size: 9))
+                        .foregroundColor(theme.textSecondaryColor.opacity(0.7))
+                        .lineLimit(1)
+                }
             }
             Spacer()
 

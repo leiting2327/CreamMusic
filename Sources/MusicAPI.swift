@@ -13,6 +13,7 @@ struct Song: Identifiable, Codable, Equatable {
     var hash: String = ""
     var kuwoRid: String = ""
     var kuwoPic: String = ""
+    var isVip: Bool = false // VIP 歌曲标注
 
     var sourceLabel: String {
         switch source {
@@ -22,6 +23,22 @@ struct Song: Identifiable, Codable, Equatable {
         case "kuwo": return "酷我"
         default: return "音乐"
         }
+    }
+}
+
+// 评论模型
+struct MusicComment: Identifiable, Hashable {
+    let id: String
+    let user: String
+    let avatar: String
+    let content: String
+    let likedCount: Int
+    let time: Int
+    var timeText: String {
+        let d = Date(timeIntervalSince1970: TimeInterval(time))
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        return f.string(from: d)
     }
 }
 
@@ -127,6 +144,7 @@ class MusicAPI {
             let ar = s["ar"] as? [[String: Any]] ?? []
             let artists = ar.compactMap { $0["name"] as? String }.joined(separator: "/")
             let dur = s["dt"] as? Int ?? 0
+            let fee = s["fee"] as? Int ?? 0
             return Song(
                 id: "\(s["id"] as? Int ?? 0)",
                 name: s["name"] as? String ?? "未知",
@@ -134,7 +152,8 @@ class MusicAPI {
                 album: al["name"] as? String ?? "",
                 coverUrl: al["picUrl"] as? String ?? "",
                 source: "netease",
-                duration: dur / 1000
+                duration: dur / 1000,
+                isVip: fee > 0
             )
         }
     }
@@ -161,6 +180,9 @@ class MusicAPI {
         return list.map { s in
             let singers = (s["singer"] as? [[String: Any]]) ?? []
             let artists = singers.compactMap { $0["name"] as? String }.joined(separator: "/")
+            // QQ 付费标记：pay 1=付费
+            let pay = s["pay"] as? Int ?? 0
+            let payPlay = (s["pay_play"] as? Int) ?? 0
             return Song(
                 id: "\(s["songmid"] as? String ?? "")",
                 name: s["songname"] as? String ?? "未知",
@@ -169,7 +191,8 @@ class MusicAPI {
                 coverUrl: "https://y.gtimg.cn/music/photo_new/T002R300x300M000\(s["albummid"] as? String ?? "").jpg",
                 source: "tencent",
                 duration: (s["interval"] as? Int) ?? 0,
-                songmid: s["songmid"] as? String ?? ""
+                songmid: s["songmid"] as? String ?? "",
+                isVip: pay > 0 || payPlay > 0
             )
         }
     }
@@ -233,7 +256,7 @@ class MusicAPI {
         var songs: [Song] = []
         for block in blocks.prefix(30) {
             let lines = block.components(separatedBy: "\n")
-            var rid = "", name = "", artist = "", album = "", pic = "", dur = 0, mp3size = 0
+            var rid = "", name = "", artist = "", album = "", pic = "", dur = 0, mp3size = 0, isVip = false
             for line in lines {
                 let kv = line.split(separator: "=", maxSplits: 1).map(String.init)
                 guard kv.count == 2 else { continue }
@@ -247,6 +270,7 @@ class MusicAPI {
                 case "web_albumpic_short": pic = "https://img1.kuwo.cn/star/albumcover/\(val)"
                 case "web_artistpic_short": if pic.isEmpty { pic = "https://img1.kuwo.cn/star/artistcover/\(val)" }
                 case "MP3SIZE": mp3size = Int(val) ?? 0
+                case "PAY": isVip = val.contains("1") || val.lowercased().contains("vip")
                 default: break
                 }
             }
@@ -260,20 +284,43 @@ class MusicAPI {
                 source: "kuwo",
                 duration: mp3size > 0 ? mp3size / 15000 : 0,
                 kuwoRid: rid,
-                kuwoPic: pic
+                kuwoPic: pic,
+                isVip: isVip
             ))
         }
         return songs
     }
 
-    // ===== 获取播放地址（支持音质） =====
+    // ===== 获取播放地址（免费模式自动兜底：原平台失败→酷我同名） =====
     func getSongUrl(source: String, song: Song, quality: AudioQuality = .standard) async throws -> String {
-        switch source {
-        case "tencent": return try await songUrlQQ(song: song)
-        case "kugou": return try await songUrlKugou(song: song)
-        case "kuwo": return try await songUrlKuwo(song: song)
-        default: return try await songUrlNetease(id: song.id)
+        let freeMode = UserDefaults.standard.bool(forKey: "freeMode")
+        do {
+            switch source {
+            case "tencent": return try await songUrlQQ(song: song)
+            case "kugou": return try await songUrlKugou(song: song)
+            case "kuwo": return try await songUrlKuwo(song: song)
+            default: return try await songUrlNetease(id: song.id)
+            }
+        } catch {
+            // 免费模式：原平台失败自动跨平台兜底（酷我是唯一稳定免费通道）
+            if freeMode {
+                if let fallback = try? await fallbackKuwo(name: song.name, artist: song.artist) {
+                    return fallback
+                }
+            }
+            throw error
         }
+    }
+
+    // 兜底：搜索酷我同名歌曲并取播放地址
+    private func fallbackKuwo(name: String, artist: String) async throws -> String {
+        let kw = (try? await searchKuwo(keyword: name)) ?? []
+        // 优先匹配歌手，否则取第一条
+        let match = kw.first(where: { $0.artist.contains(artist) && !$0.artist.isEmpty }) ?? kw.first
+        guard let song = match else {
+            throw NSError(domain: "Play", code: -1, userInfo: [NSLocalizedDescriptionKey: "免费模式兜底失败"])
+        }
+        return try await songUrlKuwo(song: song)
     }
 
     // 网易云：Meting 流式
@@ -406,27 +453,7 @@ class MusicAPI {
         comps.queryItems = enc.map { URLQueryItem(name: $0.key, value: $0.value) }
         req.httpBody = comps.query?.data(using: .utf8)
         let (data, _) = try await session.data(for: req)
-        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            throw NSError(domain: "Login", code: -1, userInfo: [NSLocalizedDescriptionKey: "登录失败，请检查网络"])
-        }
-        let code = json["code"] as? Int ?? -1
-        guard code == 200 else {
-            let msg = json["message"] as? String ?? "账号或密码错误"
-            throw NSError(domain: "Login", code: code, userInfo: [NSLocalizedDescriptionKey: msg])
-        }
-        guard let profile = json["profile"] as? [String: Any] else {
-            throw NSError(domain: "Login", code: -1, userInfo: [NSLocalizedDescriptionKey: "登录响应异常"])
-        }
-        if let resp = json["cookie"] as? String, !resp.isEmpty { neteaseCookie = resp }
-        return User(
-            uid: "\(profile["userId"] as? Int ?? 0)",
-            nickname: profile["nickname"] as? String ?? "用户",
-            avatarUrl: profile["avatarUrl"] as? String ?? "",
-            vipType: profile["vipType"] as? Int ?? 0,
-            vipLevel: profile["vipLevel"] as? Int ?? 0,
-            level: profile["level"] as? Int ?? 0,
-            platform: "netease"
-        )
+        return try parseNeteaseLogin(data: data)
     }
 
     // ===== QQ 扫码登录 =====
@@ -447,9 +474,224 @@ class MusicAPI {
         return ("data:image/png;base64,\(b64)", qrsig)
     }
 
+    // ===== 网易云验证码登录 =====
+    // 发送短信验证码
+    func sendSmsCaptcha(phone: String) async throws {
+        var req = URLRequest(url: URL(string: "\(neteaseBase)/api/sms/captcha/sent")!)
+        req.httpMethod = "POST"
+        req.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        req.setValue(UserAgent, forHTTPHeaderField: "User-Agent")
+        req.httpBody = "cellphone=\(urlEnc(phone))&ctcode=86".data(using: .utf8)
+        let (data, _) = try await session.data(for: req)
+        if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let code = json["code"] as? Int, code != 200 {
+            let msg = json["message"] as? String ?? "验证码发送失败"
+            throw NSError(domain: "Login", code: code, userInfo: [NSLocalizedDescriptionKey: msg])
+        }
+    }
+
+    // 验证码登录
+    func loginPhoneCaptcha(phone: String, captcha: String) async throws -> User {
+        let payload: [String: Any] = [
+            "phone": phone,
+            "captcha": captcha,
+            "rememberLogin": true,
+            "csrf_token": "",
+        ]
+        let enc = NetEaseCrypto.weapi(payload)
+        var req = URLRequest(url: URL(string: "\(neteaseBase)/weapi/login/cellphone")!)
+        req.httpMethod = "POST"
+        req.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        req.setValue(UserAgent, forHTTPHeaderField: "User-Agent")
+        req.setValue(neteaseCookie, forHTTPHeaderField: "Cookie")
+        var comps = URLComponents()
+        comps.queryItems = enc.map { URLQueryItem(name: $0.key, value: $0.value) }
+        req.httpBody = comps.query?.data(using: .utf8)
+        let (data, _) = try await session.data(for: req)
+        return try parseNeteaseLogin(data: data)
+    }
+
+    // 网易云扫码登录：获取 unikey
+    func neteaseQRCode() async throws -> String {
+        var req = URLRequest(url: URL(string: "\(neteaseBase)/api/login/qrcode/unikey?timestamp=\(Int(Date().timeIntervalSince1970 * 1000))")!)
+        req.httpMethod = "POST"
+        req.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        req.setValue(UserAgent, forHTTPHeaderField: "User-Agent")
+        req.httpBody = "type=1".data(using: .utf8)
+        let (data, _) = try await session.data(for: req)
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let unikey = json["unikey"] as? String, !unikey.isEmpty else {
+            throw NSError(domain: "Login", code: -1, userInfo: [NSLocalizedDescriptionKey: "获取二维码失败"])
+        }
+        return unikey
+    }
+
+    // 网易云扫码登录：轮询检查（801等待扫码 802已扫码待确认 803成功）
+    func neteaseQRCheck(unikey: String) async throws -> (code: Int, user: User?) {
+        var req = URLRequest(url: URL(string: "\(neteaseBase)/api/login/qrcode/client/login?timestamp=\(Int(Date().timeIntervalSince1970 * 1000))")!)
+        req.httpMethod = "POST"
+        req.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        req.setValue(UserAgent, forHTTPHeaderField: "User-Agent")
+        req.httpBody = "key=\(urlEnc(unikey))&type=1".data(using: .utf8)
+        let (data, resp) = try await session.data(for: req)
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let code = json["code"] as? Int else {
+            return (0, nil)
+        }
+        if code == 803, let http = resp as? HTTPURLResponse,
+           let setCookie = http.allHeaderFields["Set-Cookie"] as? String, !setCookie.isEmpty {
+            neteaseCookie = setCookie
+            // 用 cookie 拉取用户信息
+            let user = try? await fetchNeteaseProfile()
+            return (803, user)
+        }
+        return (code, nil)
+    }
+
+    // 用当前 cookie 拉取网易云用户信息
+    func fetchNeteaseProfile() async throws -> User {
+        var req = URLRequest(url: URL(string: "\(neteaseBase)/api/nuser/account/get")!)
+        req.setValue(UserAgent, forHTTPHeaderField: "User-Agent")
+        req.setValue(neteaseCookie, forHTTPHeaderField: "Cookie")
+        let (data, _) = try await session.data(for: req)
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let profile = json["profile"] as? [String: Any] else {
+            throw NSError(domain: "Login", code: -1, userInfo: [NSLocalizedDescriptionKey: "获取用户信息失败"])
+        }
+        return User(
+            uid: "\(profile["userId"] as? Int ?? 0)",
+            nickname: profile["nickname"] as? String ?? "用户",
+            avatarUrl: profile["avatarUrl"] as? String ?? "",
+            vipType: profile["vipType"] as? Int ?? 0,
+            vipLevel: profile["vipLevel"] as? Int ?? 0,
+            level: profile["level"] as? Int ?? 0,
+            platform: "netease"
+        )
+    }
+
+    // ===== 评论（各平台评论数据接口） =====
+    func getComments(song: Song, limit: Int = 20, offset: Int = 0) async throws -> [MusicComment] {
+        switch song.source {
+        case "netease":
+            return try await commentsNetease(id: song.id, limit: limit, offset: offset)
+        case "tencent":
+            return try await commentsQQ(song: song, limit: limit)
+        case "kuwo":
+            return try await commentsKuwo(song: song, limit: limit)
+        default:
+            return try await commentsNetease(id: song.id, limit: limit, offset: offset)
+        }
+    }
+
+    // 网易云评论
+    private func commentsNetease(id: String, limit: Int, offset: Int) async throws -> [MusicComment] {
+        var req = URLRequest(url: URL(string: "\(neteaseBase)/api/v1/resource/comments/R_SO_4_\(id)?limit=\(limit)&offset=\(offset)")!)
+        req.setValue(UserAgent, forHTTPHeaderField: "User-Agent")
+        let (data, _) = try await session.data(for: req)
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { return [] }
+        let hot = (json["hotComments"] as? [[String: Any]]) ?? []
+        let new = (json["comments"] as? [[String: Any]]) ?? []
+        var result: [MusicComment] = []
+        for c in hot {
+            let user = c["user"] as? [String: Any] ?? [:]
+            result.append(MusicComment(
+                id: "\(c["commentId"] as? Int ?? 0)",
+                user: user["nickname"] as? String ?? "匿名",
+                avatar: user["avatarUrl"] as? String ?? "",
+                content: c["content"] as? String ?? "",
+                likedCount: c["likedCount"] as? Int ?? 0,
+                time: c["time"] as? Int ?? 0
+            ))
+        }
+        for c in new {
+            let user = c["user"] as? [String: Any] ?? [:]
+            result.append(MusicComment(
+                id: "\(c["commentId"] as? Int ?? 0)",
+                user: user["nickname"] as? String ?? "匿名",
+                avatar: user["avatarUrl"] as? String ?? "",
+                content: c["content"] as? String ?? "",
+                likedCount: c["likedCount"] as? Int ?? 0,
+                time: c["time"] as? Int ?? 0
+            ))
+        }
+        return result
+    }
+
+    // QQ 评论（fcg_global_comment_h5）
+    private func commentsQQ(song: Song, limit: Int) async throws -> [MusicComment] {
+        var req = URLRequest(url: URL(string: "https://c.y.qq.com/base/fcgi-bin/fcg_global_comment_h5.fcg?reqtype=2&biztype=1&topid=\(song.id)&cmd=6&pagenum=0&pagesize=\(limit)&format=json")!)
+        req.setValue(UserAgent, forHTTPHeaderField: "User-Agent")
+        req.setValue("https://y.qq.com/", forHTTPHeaderField: "Referer")
+        let (data, _) = try await session.data(for: req)
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { return [] }
+        let comment = (json["comment"] as? [String: Any]) ?? [:]
+        let list = (comment["commentlist"] as? [[String: Any]]) ?? []
+        var result: [MusicComment] = []
+        for c in list {
+            let user = c["userinfo"] as? [String: Any] ?? c["user"] as? [String: Any] ?? [:]
+            result.append(MusicComment(
+                id: "\(c["commentid"] as? String ?? UUID().uuidString)",
+                user: user["nick"] as? String ?? user["nickname"] as? String ?? "匿名",
+                avatar: user["avatar"] as? String ?? "",
+                content: c["rootcommentcontent"] as? String ?? c["commentcontent"] as? String ?? "",
+                likedCount: c["praisenum"] as? Int ?? 0,
+                time: c["time"] as? Int ?? 0
+            ))
+        }
+        return result
+    }
+
+    // 酷我评论
+    private func commentsKuwo(song: Song, limit: Int) async throws -> [MusicComment] {
+        var req = URLRequest(url: URL(string: "https://www.kuwo.cn/comment/get_comments?type=get_comment&rid=\(song.id)&page=1&rows=\(limit)")!)
+        req.setValue(UserAgent, forHTTPHeaderField: "User-Agent")
+        req.setValue("https://www.kuwo.cn/", forHTTPHeaderField: "Referer")
+        let (data, _) = try await session.data(for: req)
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let comments = json["comments"] as? [[String: Any]] else { return [] }
+        var result: [MusicComment] = []
+        for c in comments {
+            let user = c["user"] as? [String: Any] ?? [:]
+            result.append(MusicComment(
+                id: "\(c["id"] as? Int ?? 0)",
+                user: user["userName"] as? String ?? user["nickname"] as? String ?? "匿名",
+                avatar: user["pic"] as? String ?? "",
+                content: c["msg"] as? String ?? c["content"] as? String ?? "",
+                likedCount: c["likeNum"] as? Int ?? 0,
+                time: (c["time"] as? Int) ?? 0
+            ))
+        }
+        return result
+    }
+
     // ===== 工具 =====
     private var UserAgent: String {
         "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148"
+    }
+
+    // 解析网易云登录响应（密码/验证码共用）
+    private func parseNeteaseLogin(data: Data) throws -> User {
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw NSError(domain: "Login", code: -1, userInfo: [NSLocalizedDescriptionKey: "登录失败，请检查网络"])
+        }
+        let code = json["code"] as? Int ?? -1
+        guard code == 200 else {
+            let msg = json["message"] as? String ?? (code == 400 ? "验证码错误或已过期" : "登录失败")
+            throw NSError(domain: "Login", code: code, userInfo: [NSLocalizedDescriptionKey: msg])
+        }
+        guard let profile = json["profile"] as? [String: Any] else {
+            throw NSError(domain: "Login", code: -1, userInfo: [NSLocalizedDescriptionKey: "登录响应异常"])
+        }
+        if let resp = json["cookie"] as? String, !resp.isEmpty { neteaseCookie = resp }
+        return User(
+            uid: "\(profile["userId"] as? Int ?? 0)",
+            nickname: profile["nickname"] as? String ?? "用户",
+            avatarUrl: profile["avatarUrl"] as? String ?? "",
+            vipType: profile["vipType"] as? Int ?? 0,
+            vipLevel: profile["vipLevel"] as? Int ?? 0,
+            level: profile["level"] as? Int ?? 0,
+            platform: "netease"
+        )
     }
 
     private func urlEnc(_ s: String) -> String {

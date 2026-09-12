@@ -13,6 +13,9 @@ struct PlayerView: View {
     @State private var showDownloadSheet = false
     @State private var showCloseConfirm = false
     @State private var downloadError: String?
+    @State private var showComments = false
+    @State private var comments: [MusicComment] = []
+    @State private var commentsLoading = false
 
     var body: some View {
         ZStack {
@@ -107,6 +110,15 @@ struct PlayerView: View {
                                     .padding(.horizontal, 6).padding(.vertical, 2)
                                     .background(theme.primaryColor)
                                     .cornerRadius(4)
+                                // VIP 标注
+                                if player.currentSong?.isVip == true {
+                                    Text("VIP")
+                                        .font(.system(size: 9, weight: .bold))
+                                        .foregroundColor(.white)
+                                        .padding(.horizontal, 6).padding(.vertical, 2)
+                                        .background(LinearGradient(colors: [.orange, .red], startPoint: .leading, endPoint: .trailing))
+                                        .cornerRadius(4)
+                                }
                                 Spacer()
                                 // 下载按钮
                                 Button {
@@ -201,7 +213,10 @@ struct PlayerView: View {
 
                 // 底部工具条：评论/循环/歌单/音量/AirPlay
                 HStack(spacing: 24) {
-                    Button {} label: {
+                    Button {
+                        loadComments()
+                        showComments = true
+                    } label: {
                         Image(systemName: "bubble.left").font(.system(size: 15)).foregroundColor(theme.textSecondaryColor)
                     }
                     Button {} label: {
@@ -234,6 +249,27 @@ struct PlayerView: View {
             if let song = player.currentSong {
                 DownloadSheet(song: song)
                     .presentationDetents([.medium])
+            }
+        }
+        .sheet(isPresented: $showComments) {
+            CommentsView(song: player.currentSong, comments: comments, loading: commentsLoading)
+                .presentationDetents([.large])
+        }
+    }
+
+    private func loadComments() {
+        guard let song = player.currentSong else { return }
+        commentsLoading = true
+        comments = []
+        Task {
+            do {
+                let list = try await MusicAPI.shared.getComments(song: song)
+                await MainActor.run {
+                    comments = list
+                    commentsLoading = false
+                }
+            } catch {
+                await MainActor.run { commentsLoading = false }
             }
         }
     }
@@ -391,5 +427,105 @@ struct AirPlayButton: UIViewRepresentable {
             picker.tintColor = tintColor
             picker.activeTintColor = tintColor
         }
+    }
+}
+
+// 评论列表页（接入各平台评论数据接口）
+struct CommentsView: View {
+    @EnvironmentObject var theme: ThemeManager
+    @Environment(\.dismiss) var dismiss
+    let song: Song?
+    let comments: [MusicComment]
+    let loading: Bool
+
+    var body: some View {
+        VStack(spacing: 12) {
+            HStack {
+                Button { dismiss() } label: {
+                    Image(systemName: "chevron.down").foregroundColor(theme.textColor)
+                }
+                Spacer()
+                Text("评论").font(.headline).foregroundColor(theme.textColor)
+                Spacer()
+                Text("\(comments.count)").font(.caption).foregroundColor(theme.textSecondaryColor)
+            }
+            .padding(.horizontal, 20).padding(.top, 16)
+
+            if let song {
+                HStack(spacing: 10) {
+                    AsyncImage(url: URL(string: song.coverUrl)) { img in
+                        img.resizable().scaledToFill()
+                    } placeholder: {
+                        RoundedRectangle(cornerRadius: 6).fill(theme.primaryColor.opacity(0.2))
+                    }
+                    .frame(width: 40, height: 40)
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(song.name).font(.subheadline).bold().foregroundColor(theme.textColor).lineLimit(1)
+                        Text("\(song.sourceLabel)\(song.isVip ? " · VIP" : "") · \(song.album.isEmpty ? "单曲" : song.album)")
+                            .font(.caption).foregroundColor(theme.textSecondaryColor).lineLimit(1)
+                    }
+                    Spacer()
+                }
+                .padding(.horizontal, 20)
+            }
+
+            if loading {
+                Spacer()
+                ProgressView("加载评论…")
+                Spacer()
+            } else if comments.isEmpty {
+                Spacer()
+                Image(systemName: "bubble.left")
+                    .font(.system(size: 40)).foregroundColor(theme.textSecondaryColor.opacity(0.5))
+                Text("暂无评论").font(.subheadline).foregroundColor(theme.textSecondaryColor)
+                Spacer()
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 14) {
+                        ForEach(comments) { c in
+                            HStack(alignment: .top, spacing: 10) {
+                                // 头像
+                                if c.avatar.isEmpty {
+                                    Circle().fill(theme.primaryColor.opacity(0.3))
+                                        .frame(width: 34, height: 34)
+                                        .overlay(Image(systemName: "person.fill").font(.system(size: 14)).foregroundColor(.white))
+                                } else {
+                                    AsyncImage(url: URL(string: c.avatar)) { img in
+                                        img.resizable().scaledToFill()
+                                    } placeholder: {
+                                        Circle().fill(theme.primaryColor.opacity(0.3))
+                                    }
+                                    .frame(width: 34, height: 34)
+                                    .clipShape(Circle())
+                                }
+                                VStack(alignment: .leading, spacing: 4) {
+                                    HStack {
+                                        Text(c.user).font(.caption).bold().foregroundColor(theme.primaryColor)
+                                        Spacer()
+                                        Text(c.timeText).font(.system(size: 10)).foregroundColor(theme.textSecondaryColor)
+                                    }
+                                    Text(c.content)
+                                        .font(.subheadline)
+                                        .foregroundColor(theme.textColor)
+                                        .lineSpacing(3)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                    HStack {
+                                        Image(systemName: "hand.thumbsup").font(.system(size: 10)).foregroundColor(theme.textSecondaryColor)
+                                        Text("\(c.likedCount)").font(.system(size: 10)).foregroundColor(theme.textSecondaryColor)
+                                    }
+                                }
+                            }
+                            .padding(12)
+                            .background {
+                                RoundedRectangle(cornerRadius: 14).fill(.ultraThinMaterial).opacity(theme.glassIntensity)
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 20).padding(.bottom, 20)
+                }
+            }
+        }
+        .background(theme.bgColor)
     }
 }
